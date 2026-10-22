@@ -21,10 +21,12 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest==9.1.1"]
+tracking = ["mlflow-skinny==3.17.2"]
 
 [project.scripts]
 simplecredits-train = "simplecredits.ml.training.train:main"
 simplecredits-scoring = "simplecredits.ml.serving.server:main"
+simplecredits-compare = "simplecredits.ml.tracking.compare:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

@@ -5,5 +5,8 @@
 **/.pytest_cache
 ml/artifacts/*.joblib
 ml/data/*.csv
+mlruns/
+mlartifacts/
+mlflow/
 pdf_text.txt
 *.pdf
