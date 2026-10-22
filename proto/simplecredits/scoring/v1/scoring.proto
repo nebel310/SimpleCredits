@@ -1,0 +1,168 @@
+syntax = "proto3";
+
+package simplecredits.scoring.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "simplecredits/gen/scoring/v1;scoringv1";
+
+service ScoringService {
+  rpc ScoreApplication(ScoreApplicationRequest) returns (ScoreApplicationResponse);
+  rpc BatchScoreApplications(BatchScoreApplicationsRequest) returns (BatchScoreApplicationsResponse);
+  rpc GetModelInfo(GetModelInfoRequest) returns (GetModelInfoResponse);
+}
+
+message ScoreApplicationRequest {
+  string application_id = 1;
+  Application application = 2;
+  Company company = 3;
+  Financials financials = 4;
+  CreditHistory credit_history = 5;
+}
+
+message ScoreApplicationResponse {
+  string application_id = 1;
+  int32 score = 2;
+  double pd = 3;
+  RiskGrade risk_grade = 4;
+  repeated ReasonCode reason_codes = 5;
+  string model_version = 6;
+  google.protobuf.Timestamp scored_at = 7;
+  DecisionResult decision = 8;
+}
+
+message DecisionResult {
+  Decision decision = 1;
+  repeated string reason_codes = 2;
+  repeated DecisionCondition conditions = 3;
+}
+
+message DecisionCondition {
+  string code = 1;
+  string description = 2;
+  int64 recommended_amount_rub = 3;
+}
+
+message BatchScoreApplicationsRequest {
+  repeated ScoreApplicationRequest applications = 1;
+}
+
+message BatchScoreApplicationsResponse {
+  repeated ScoreApplicationResponse results = 1;
+}
+
+message GetModelInfoRequest {}
+
+message GetModelInfoResponse {
+  string model_version = 1;
+  string model_type = 2;
+  google.protobuf.Timestamp trained_at = 3;
+  repeated string features = 4;
+  map<string, double> metrics = 5;
+}
+
+message Application {
+  ProductType product_type = 1;
+  int64 requested_amount_rub = 2;
+  int32 term_months = 3;
+  FinancingPurpose purpose = 4;
+  BusinessSegment segment = 5;
+  google.protobuf.Timestamp submitted_at = 6;
+}
+
+message Company {
+  string inn = 1;
+  string ogrn = 2;
+  string legal_name = 3;
+  LegalForm legal_form = 4;
+  string okved = 5;
+  string region = 6;
+  google.protobuf.Timestamp registration_date = 7;
+  int32 employee_count = 8;
+}
+
+message Financials {
+  int64 annual_revenue_rub = 1;
+  int64 annual_net_profit_rub = 2;
+  int64 ebitda_rub = 3;
+  int64 total_debt_rub = 4;
+  int64 monthly_revenue_rub = 5;
+  int64 monthly_expenses_rub = 6;
+  int64 accounts_receivable_rub = 7;
+  int64 cash_balance_rub = 8;
+  google.protobuf.Timestamp period_end = 9;
+}
+
+message CreditHistory {
+  int32 active_obligations_count = 1;
+  int64 total_outstanding_rub = 2;
+  int64 monthly_debt_payments_rub = 3;
+  int32 max_days_past_due_12m = 4;
+  bool has_current_past_due = 5;
+  double credit_utilization = 6;
+  int32 closed_obligations_count = 7;
+  int32 applications_last_6m = 8;
+}
+
+message ReasonCode {
+  string code = 1;
+  string description = 2;
+  string feature = 3;
+  ReasonImpact impact = 4;
+  double contribution = 5;
+}
+
+enum ProductType {
+  PRODUCT_TYPE_UNSPECIFIED = 0;
+  PRODUCT_TYPE_MICROLOAN = 1;
+  PRODUCT_TYPE_TERM_LOAN = 2;
+  PRODUCT_TYPE_OVERDRAFT = 3;
+  PRODUCT_TYPE_CREDIT_LINE = 4;
+  PRODUCT_TYPE_LEASING = 5;
+}
+
+enum FinancingPurpose {
+  FINANCING_PURPOSE_UNSPECIFIED = 0;
+  FINANCING_PURPOSE_WORKING_CAPITAL = 1;
+  FINANCING_PURPOSE_EQUIPMENT = 2;
+  FINANCING_PURPOSE_EXPANSION = 3;
+  FINANCING_PURPOSE_REFINANCING = 4;
+  FINANCING_PURPOSE_OTHER = 5;
+}
+
+enum BusinessSegment {
+  BUSINESS_SEGMENT_UNSPECIFIED = 0;
+  BUSINESS_SEGMENT_MICRO = 1;
+  BUSINESS_SEGMENT_SMALL = 2;
+}
+
+enum LegalForm {
+  LEGAL_FORM_UNSPECIFIED = 0;
+  LEGAL_FORM_LLC = 1;
+  LEGAL_FORM_INDIVIDUAL_ENTREPRENEUR = 2;
+  LEGAL_FORM_JOINT_STOCK_COMPANY = 3;
+}
+
+enum RiskGrade {
+  RISK_GRADE_UNSPECIFIED = 0;
+  RISK_GRADE_A = 1;
+  RISK_GRADE_B = 2;
+  RISK_GRADE_C = 3;
+  RISK_GRADE_D = 4;
+  RISK_GRADE_E = 5;
+}
+
+enum ReasonImpact {
+  REASON_IMPACT_UNSPECIFIED = 0;
+  REASON_IMPACT_POSITIVE = 1;
+  REASON_IMPACT_NEGATIVE = 2;
+  REASON_IMPACT_NEUTRAL = 3;
+}
+
+enum Decision {
+  DECISION_UNSPECIFIED = 0;
+  DECISION_APPROVE = 1;
+  DECISION_APPROVE_WITH_CONDITIONS = 2;
+  DECISION_MANUAL_REVIEW = 3;
+  DECISION_DECLINE = 4;
+}

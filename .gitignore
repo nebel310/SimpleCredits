@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+
+# ML artifacts and generated data
+ml/artifacts/*.joblib
+ml/data/*.csv
+ml/data/*.parquet
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
