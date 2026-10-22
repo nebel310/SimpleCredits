@@ -1,0 +1,13 @@
+.git
+.gitignore
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+ml/artifacts/*.joblib
+ml/data/*.csv
+mlruns/
+mlartifacts/
+mlflow/
+.mlflow/
+pdf_text.txt
+*.pdf
