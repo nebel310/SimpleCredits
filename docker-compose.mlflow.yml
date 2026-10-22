@@ -17,11 +17,11 @@ services:
       - --default-artifact-root
       - mlflow-artifacts:/
       - --allowed-hosts
-      - localhost,127.0.0.1,mlflow,simplecredits-mlflow
+      - localhost,127.0.0.1,localhost:*,127.0.0.1:*,mlflow,mlflow:*,simplecredits-mlflow,simplecredits-mlflow:*
     ports:
       - "5000:5000"
     volumes:
-      - ./mlflow:/mlflow
+      - ./.mlflow:/mlflow
     healthcheck:
       test:
         - CMD

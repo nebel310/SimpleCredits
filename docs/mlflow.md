@@ -21,10 +21,12 @@ Invoke-WebRequest -UseBasicParsing http://localhost:5000/health
 
 Веб-интерфейс: http://localhost:5000
 
-Данные сервера сохраняются в `./mlflow/`:
+Данные сервера сохраняются в `./.mlflow/`:
 
-- `mlflow/mlflow.db` — SQLite с экспериментами и registry;
-- `mlflow/artifacts/` — артефакты, датасеты и веса моделей.
+- `.mlflow/mlflow.db` — SQLite с экспериментами и registry;
+- `.mlflow/artifacts/` — артефакты, датасеты и веса моделей.
+
+Каталог назван `.mlflow`, а не `mlflow`, чтобы локальная папка не перекрывала Python-пакет `mlflow` при запуске из корня репозитория.
 
 Остановка:
 
@@ -32,7 +34,7 @@ Invoke-WebRequest -UseBasicParsing http://localhost:5000/health
 docker compose -f docker-compose.mlflow.yml down
 ```
 
-Полный сброс сервера — остановить контейнер и удалить каталог `mlflow/`.
+Полный сброс сервера — остановить контейнер и удалить каталог `.mlflow/`.
 
 Логи:
 
@@ -234,9 +236,7 @@ python -m compileall -q ml/src ml/tests
 - file store: логирование run, метрик, датасета, артефактов, pyfunc-модели и загрузка модели;
 - HTTP-сервер MLflow 3.17.2: логирование, регистрация версии, alias `champion`, загрузка модели из registry и предсказание;
 - сравнение запусков через CLI по file store и HTTP;
-- аргументы запуска MLflow-сервера из compose проверены на локальном сервере.
-
-Docker-контейнер в текущем окружении не запускался: Docker не установлен. Образ `ghcr.io/mlflow/mlflow:v3.17.2` проверен по registry.
+- Docker-контейнер из `docker-compose.mlflow.yml`: health, обучение, регистрация версии, alias `champion`, загрузка модели из registry, предсказание и сравнение запусков. Артефакты сохраняются в `./.mlflow/`.
 
 ## 9. Типичные проблемы
 
@@ -267,10 +267,14 @@ $env:NO_PROXY = "localhost,127.0.0.1"
 $env:no_proxy = "localhost,127.0.0.1"
 ```
 
+`Invalid Host header - possible DNS rebinding attack detected`
+
+При явном `--allowed-hosts` указывайте варианты с портом (`localhost:*`, `127.0.0.1:*`, `mlflow:*`): заголовок Host содержит порт. Без этого флага MLflow по умолчанию разрешает localhost с любым портом.
+
 Порт 5000 занят
 
 Измените mapping в `docker-compose.mlflow.yml` и передайте новый URI в `--tracking-uri` или `MLFLOW_TRACKING_URI`.
 
 Нужно удалить эксперименты и registry
 
-Остановите контейнер и удалите `mlflow/`. Каталоги `mlruns/`, `mlartifacts/`, `mlflow.db*` и `mlflow/` исключены из git.
+Остановите контейнер и удалите `.mlflow/`. Каталоги `mlruns/`, `mlartifacts/`, `mlflow.db*`, `.mlflow/` и старый `mlflow/` исключены из git.

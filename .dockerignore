@@ -8,5 +8,6 @@ ml/data/*.csv
 mlruns/
 mlartifacts/
 mlflow/
+.mlflow/
 pdf_text.txt
 *.pdf
