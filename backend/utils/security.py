@@ -93,3 +93,19 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserOrm:
 def get_password_hash(password: str) -> str:
     """Создает хэш пароля."""
     return pwd_context.hash(password)
+
+
+def require_role(*allowed_roles: str):
+    """Возвращает зависимость, проверяющую что у текущего пользователя одна из разрешённых ролей"""
+    async def checker(current_user: UserOrm = Depends(get_current_user)) -> UserOrm:
+        """Проверяет роль текущего пользователя и возвращает его"""
+        if current_user.role not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Недостаточно прав"
+            )
+        return current_user
+    return checker
+
+
+require_admin = require_role("admin")

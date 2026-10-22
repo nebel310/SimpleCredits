@@ -71,10 +71,11 @@ class SUserUpdate(BaseModel):
 
 
 class SUser(BaseModel):
-    """Схема для отображения информации о пользователе."""
+    """Схема для отображения информации о пользователе"""
     id: int
     username: str
     email: EmailStr
+    role: Literal["admin", "user"]
     avatar_id: int | None=None
     bio: str | None = None
     birth_date: date | None = None
@@ -89,6 +90,18 @@ class SUser(BaseModel):
                     "id": 1,
                     "username": "john_doe",
                     "email": "john@example.com",
+                    "role": "user",
+                    "avatar_id": None,
+                    "bio": None,
+                    "birth_date": None,
+                    "gender": None,
+                    "created_at": "2024-01-01T12:00:00Z"
+                },
+                {
+                    "id": 2,
+                    "username": "admin",
+                    "email": "admin@example.com",
+                    "role": "admin",
                     "avatar_id": None,
                     "bio": None,
                     "birth_date": None,

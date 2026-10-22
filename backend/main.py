@@ -1,3 +1,4 @@
+import os
 import uvicorn
 
 from contextlib import asynccontextmanager
@@ -10,6 +11,7 @@ from database import create_tables
 from database import delete_tables
 from router.auth import router as auth_router
 from router.files import router as file_router
+from repositories.auth import UserRepository
 from minio.client import s3_client
 
 
@@ -26,6 +28,13 @@ async def lifespan(app: FastAPI):
     
     await s3_client.ensure_bucket()
     print(f'Бакет {s3_client.bucket_name} создан')
+    
+    await UserRepository.ensure_admin(
+        email=os.getenv("ADMIN_EMAIL", "admin@example.com"),
+        password=os.getenv("ADMIN_PASSWORD", "adminpassword"),
+        username=os.getenv("ADMIN_USERNAME", "admin"),
+    )
+    print("Администратор готов")
     
     yield
     

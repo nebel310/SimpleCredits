@@ -32,7 +32,7 @@ class UserRepository:
     """Репозиторий для работы с пользователями."""
     @classmethod
     async def register_user(cls, user_data: SUserRegister) -> int:
-        """Регистрирует нового пользователя."""
+        """Регистрирует нового пользователя с ролью user"""
         async with new_session() as session:
             query = select(UserOrm).where(UserOrm.email == user_data.email)
             result = await session.execute(query)
@@ -45,7 +45,8 @@ class UserRepository:
             user = UserOrm(
                 username=user_data.username,
                 email=user_data.email,
-                hashed_password=hashed_password
+                hashed_password=hashed_password,
+                role="user"
             )
             
             session.add(user)
@@ -253,3 +254,24 @@ class UserRepository:
                 raise ValueError("Invalid direction")
 
             return users, next_id, prev_id
+    
+    
+    @classmethod
+    async def ensure_admin(cls, email: str, password: str, username: str = "admin") -> None:
+        """Создаёт администратора если пользователя с таким email ещё нет"""
+        async with new_session() as session:
+            query = select(UserOrm).where(UserOrm.email == email)
+            result = await session.execute(query)
+
+            if result.scalars().first():
+                return
+
+            admin = UserOrm(
+                username=username,
+                email=email,
+                hashed_password=pwd_context.hash(password),
+                role="admin"
+            )
+
+            session.add(admin)
+            await session.commit()

@@ -16,10 +16,11 @@ class UserOrm(Model):
     username: Mapped[str]
     email: Mapped[str] = mapped_column(unique=True, nullable=False)
     hashed_password: Mapped[str]
+    role: Mapped[str] = mapped_column(nullable=False, default="user", server_default="user")
     avatar_id: Mapped[int | None] = mapped_column(nullable=True)
     bio: Mapped[str | None] = mapped_column(Text, nullable=True)
     birth_date: Mapped[date | None] = mapped_column(Date, nullable=True)
-    gender: Mapped[str | None] = mapped_column(nullable=True)  # "male" / "female" / None
+    gender: Mapped[str | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), 
         default=lambda: datetime.now(timezone.utc)
