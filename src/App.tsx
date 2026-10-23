@@ -16,6 +16,7 @@ import { AllApplications, Queue } from './pages/bank/Queue';
 import { BankApplication } from './pages/bank/BankApplication';
 import { UwDecision } from './pages/bank/UwDecision';
 import { Simulator } from './pages/demo/Simulator';
+import { Mirror } from './pages/demo/Mirror';
 
 function Home() {
   const user = useSession((s) => s.user);
@@ -48,6 +49,7 @@ export function App() {
         <Route path="/bank/applications/:id" element={B(<BankApplication />)} />
         <Route path="/bank/applications/:id/decision" element={B(<UwDecision />)} />
         <Route path="/demo/simulator" element={D(<Simulator />)} />
+        <Route path="/demo/mirror" element={D(<Mirror />)} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <Toasts />
