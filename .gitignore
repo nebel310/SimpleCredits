@@ -12,6 +12,7 @@ venv/
 ml/artifacts/*.joblib
 ml/data/*.csv
 ml/data/*.parquet
+ml/data/*.manifest.json
 mlruns/
 mlartifacts/
 mlflow.db
