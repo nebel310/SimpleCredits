@@ -1,7 +1,7 @@
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { isBankRole } from './api';
 import { useSession } from './lib/hooks';
-import { ClientLayout } from './layout/Layouts';
+import { BankLayout, ClientLayout } from './layout/Layouts';
 import { Toasts } from './ui/kit';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/client/Dashboard';
@@ -12,6 +12,7 @@ import { Decision } from './pages/client/Decision';
 import { Signing } from './pages/client/Signing';
 import { Loan } from './pages/client/Loan';
 import { Documents } from './pages/client/Documents';
+import { AllApplications, Queue } from './pages/bank/Queue';
 
 function Home() {
   const user = useSession((s) => s.user);
@@ -20,6 +21,7 @@ function Home() {
 }
 
 const C = (el: JSX.Element) => <ClientLayout>{el}</ClientLayout>;
+const B = (el: JSX.Element) => <BankLayout>{el}</BankLayout>;
 
 export function App() {
   return (
@@ -37,6 +39,8 @@ export function App() {
         <Route path="/applications/:id/sign" element={C(<Signing />)} />
         <Route path="/applications/:id/loan" element={C(<Loan />)} />
         <Route path="/documents" element={C(<Documents />)} />
+        <Route path="/bank" element={B(<Queue />)} />
+        <Route path="/bank/all" element={B(<AllApplications />)} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <Toasts />
