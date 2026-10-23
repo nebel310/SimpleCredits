@@ -11,6 +11,7 @@ import { DocsRequest } from './pages/client/DocsRequest';
 import { Decision } from './pages/client/Decision';
 import { Signing } from './pages/client/Signing';
 import { Loan } from './pages/client/Loan';
+import { Documents } from './pages/client/Documents';
 
 function Home() {
   const user = useSession((s) => s.user);
@@ -35,6 +36,7 @@ export function App() {
         <Route path="/applications/:id/decision" element={C(<Decision />)} />
         <Route path="/applications/:id/sign" element={C(<Signing />)} />
         <Route path="/applications/:id/loan" element={C(<Loan />)} />
+        <Route path="/documents" element={C(<Documents />)} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <Toasts />
