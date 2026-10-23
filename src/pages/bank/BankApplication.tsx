@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { api, CHECK_SOURCES, type ApplicationView } from '../../api';
+import { api, CHECK_SOURCES, type ApplicationView, type DocRequest } from '../../api';
 import { REASON_CATALOG } from '../../api/catalog';
 import { useAction, useQuery, useSession } from '../../lib/hooks';
 import { ago, date, dateTime, dec2, money, pct, time } from '../../lib/format';
-import { BANK_STATUS, PRODUCT_NAME } from '../../lib/status';
-import { Btn, Chip, EmptyState, ErrorState, Loading, PageTitle, toast } from '../../ui/kit';
+import { BANK_STATUS, PRODUCT_NAME, ROLE_NAME } from '../../lib/status';
+import { Btn, Chip, DocumentStatus, EmptyState, ErrorState, FileBox, Loading, PageTitle, SelectField, TextField, toast } from '../../ui/kit';
 import { Px } from '../../ui/Px';
 import { useAiScreen } from '../../ai/AiAssistant';
 import { COMPANY_SHORT } from '../../lib/companies';
@@ -88,6 +88,7 @@ export function BankApplication() {
             ['overview', 'Обзор'],
             ['checks', `Проверки · ${CHECK_SOURCES.length}`],
             ['scoring', 'Скоринг'],
+            ['docs', `Документы · ${app.documents.length}`],
             ['journal', 'Журнал'],
           ] as const
         ).map(([k, l]) => (
@@ -100,6 +101,7 @@ export function BankApplication() {
       {tab === 'overview' && (
         <div className="row">
           <div className="grow stack">
+            {complianceOpen && <CompliancePanel app={app} />}
             <div className="grid-2">
               <section className="card tight">
                 <span className="caps muted">Кредитный исход</span>
@@ -206,6 +208,7 @@ export function BankApplication() {
                 </div>
               </section>
             )}
+            <DocRequestForm app={app} />
           </div>
           <aside className="side stack">
             <section className="card tight">
@@ -402,6 +405,20 @@ export function BankApplication() {
         </section>
       )}
 
+      {tab === 'docs' && (
+        <div className="stack">
+          {app.documents.length === 0 && (
+            <section className="card">
+              <EmptyState title="Документов не запрашивали" />
+            </section>
+          )}
+          {app.documents.map((d) => (
+            <BankDoc key={d.id} app={app} d={d} />
+          ))}
+          <DocRequestForm app={app} />
+        </div>
+      )}
+
       {tab === 'journal' && (
         <section className="card">
           <h2 className="h2">Журнал</h2>
@@ -428,5 +445,156 @@ export function Journal({ app, limit }: { app: ApplicationView; limit?: number }
         </li>
       ))}
     </ul>
+  );
+}
+
+function CompliancePanel({ app }: { app: ApplicationView }) {
+  const { session, user } = useSession();
+  const [comment, setComment] = useState('');
+  const act = useAction(async (_k, v: 'clear' | 'confirmed') => {
+    await api.resolveCompliance(session!, app.id, v, comment);
+    toast(v === 'clear' ? 'Совпадение не подтверждено — заявка идёт дальше' : 'Совпадение подтверждено');
+  });
+  return (
+    <section className="card" style={{ boxShadow: 'inset 0 0 0 2px var(--c-attention)' }}>
+      <div className="row-c between">
+        <h2 className="h3">Проверка по перечням</h2>
+        <Chip kind="attention">Нужно решение комплаенса</Chip>
+      </div>
+      <span className="small">{app.checks.compliance?.summary}. Это результат проверки, а не технический сбой источника.</span>
+      {user!.role === 'compliance' ? (
+        app.assignee?.userId === user!.id ? (
+          <>
+            <TextField label="Комментарий" value={comment} onChange={setComment} hint="Например: однофамилец, дата рождения не совпадает" />
+            <div className="btn-row">
+              <Btn view="primary" onClick={() => act.run('clear')} loading={act.pending}>
+                Совпадение не подтверждено
+              </Btn>
+              <Btn view="outlined" onClick={() => act.run('confirmed')} loading={act.pending}>
+                Подтвердить совпадение
+              </Btn>
+            </div>
+            {act.error && <ErrorState error={act.error} />}
+          </>
+        ) : (
+          <span className="xs muted">Возьмите заявку в работу, чтобы принять решение.</span>
+        )
+      ) : (
+        <span className="xs muted">Решение принимает сотрудник комплаенса. Андеррайтер увидит заявку после этого.</span>
+      )}
+    </section>
+  );
+}
+
+function BankDoc({ app, d }: { app: ApplicationView; d: DocRequest }) {
+  const { session, user } = useSession();
+  const [reason, setReason] = useState('');
+  const review = useAction(async (_k, v: 'accept' | 'reject') => {
+    await api.reviewDocument(session!, app.id, d.id, v, reason);
+    toast(v === 'accept' ? 'Документ принят. Заявка ушла на повторную оценку' : 'Документ возвращён клиенту');
+  });
+  const can = app.permissions.reviewDocs && d.status === 'review';
+  return (
+    <section className="card">
+      <div className="row-c between">
+        <h2 className="h3">{d.title}</h2>
+        <DocumentStatus status={d.status} />
+      </div>
+      <span className="small muted">
+        Запросил {d.requestedBy} · {dateTime(d.requestedAt)} · срок {date(d.deadline)} · {d.why}
+      </span>
+      {d.file && <FileBox name={d.file.name} size={d.file.size} uploadedAt={d.file.uploadedAt} />}
+      {d.fields.length > 0 && (
+        <dl className="dl-grid">
+          {d.fields.map((f) => (
+            <div key={f.key}>
+              <dt>
+                {f.label} {f.confirmed ? '· подтверждено клиентом' : ''}
+              </dt>
+              <dd>{f.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {d.extractError && <span className="xs muted">Распознавание не сработало — поля заполнил клиент вручную.</span>}
+      {d.answer && <div className="info-box">Ответ клиента: {d.answer}</div>}
+      {can && (
+        app.assignee?.userId === user!.id ? (
+          <>
+            <TextField label="Что исправить (если возвращаете)" value={reason} onChange={setReason} />
+            <div className="btn-row">
+              <Btn view="primary" onClick={() => review.run('accept')} loading={review.pending}>
+                Принять документ
+              </Btn>
+              <Btn view="outlined" onClick={() => review.run('reject')} disabled={reason.trim().length < 3}>
+                Вернуть на исправление
+              </Btn>
+            </div>
+            {review.error && <ErrorState error={review.error} />}
+          </>
+        ) : (
+          <span className="xs muted">Возьмите заявку в работу, чтобы проверить документ.</span>
+        )
+      )}
+    </section>
+  );
+}
+
+function DocRequestForm({ app }: { app: ApplicationView }) {
+  const { session, user } = useSession();
+  const [open, setOpen] = useState(false);
+  const [type, setType] = useState<DocRequest['type']>('bank_statement');
+  const [title, setTitle] = useState('Выписка из другого банка');
+  const [why, setWhy] = useState('');
+  const [days, setDays] = useState(3);
+  const [comment, setComment] = useState('');
+  const send = useAction(async (key) => {
+    await api.requestDocuments(session!, app.id, { type, title, why, deadline: new Date(Date.now() + days * 86400_000).toISOString(), comment }, key);
+    toast('Запрос отправлен клиенту');
+    setOpen(false);
+  });
+  if (user!.role !== 'manager' || !app.permissions.requestDocs) return null;
+  if (!open)
+    return (
+      <div>
+        <Btn view="outlined" onClick={() => setOpen(true)}>
+          Запросить документы
+        </Btn>
+      </div>
+    );
+  return (
+    <section className="card">
+      <h2 className="h3">Запрос документов</h2>
+      <div className="grid-fields">
+        <SelectField
+          label="Тип"
+          value={type}
+          onChange={(v) => {
+            setType(v);
+            setTitle(v === 'bank_statement' ? 'Выписка из другого банка' : v === 'tax_return' ? 'Налоговая декларация' : v === 'contract' ? 'Договор с покупателем' : 'Уточнение сведений');
+          }}
+          options={[
+            { value: 'bank_statement', label: 'Выписка по счёту' },
+            { value: 'tax_return', label: 'Налоговая декларация' },
+            { value: 'contract', label: 'Договор' },
+            { value: 'info', label: 'Уточнить сведения (текстом)' },
+          ]}
+        />
+        <TextField label="Что нужно" value={title} onChange={setTitle} />
+        <SelectField label="Срок" value={days} onChange={setDays} options={[1, 3, 5, 7].map((d) => ({ value: d, label: `${d} дн.` }))} />
+      </div>
+      <TextField label="Зачем (увидит клиент)" value={why} onChange={setWhy} error={send.error && !why.trim() ? 'Обязательно' : null} hint="Простыми словами: зачем банку этот документ" />
+      <TextField label="Комментарий клиенту" value={comment} onChange={setComment} />
+      <div className="btn-row">
+        <Btn view="accent" onClick={() => send.run()} loading={send.pending} disabled={!title.trim() || !why.trim()}>
+          Отправить запрос
+        </Btn>
+        <button type="button" className="linkbtn muted" onClick={() => setOpen(false)}>
+          Отмена
+        </button>
+      </div>
+      {send.error && <ErrorState error={send.error} />}
+      <span className="xs muted">Клиент увидит задачу в кабинете. Писем и SMS не будет. {ROLE_NAME[user!.role]}: {user!.name}.</span>
+    </section>
   );
 }
