@@ -1,14 +1,16 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { create } from 'zustand';
 import { Button as AlfaButton } from '@alfalab/core-components-button';
 import { Input } from '@alfalab/core-components-input';
 import { Select } from '@alfalab/core-components-select';
 import { Checkbox as AlfaCheckbox } from '@alfalab/core-components-checkbox';
 import { Radio as AlfaRadio } from '@alfalab/core-components-radio';
 import { Switch as AlfaSwitch } from '@alfalab/core-components-switch';
-import type { ApiError, ChanceLevel, DataOrigin, DocStatus } from '../api';
+import type { ApiError, ChanceLevel, DataOrigin, DocStatus, Role } from '../api';
 import { Px, type PxName } from './Px';
-import { TRACK, type BannerKind } from '../lib/status';
+import { ROLE_NAME, TRACK, type BannerKind } from '../lib/status';
+import { date } from '../lib/format';
 
 // ───── Кнопки (core-components Button) ─────
 
@@ -276,5 +278,208 @@ export function StatusBanner({ kind, icon, chip, title, children, actions, facts
       </div>
       {icon && <Px name={icon} size={72} color={color} />}
     </section>
+  );
+}
+
+// ───── Пустые, ошибки, права ─────
+
+export function EmptyState({ title, text, action }: { title: string; text?: string; action?: ReactNode }) {
+  return (
+    <div className="empty">
+      <Px name="doc" size={40} color="var(--c-border)" />
+      <b>{title}</b>
+      {text && <span>{text}</span>}
+      {action}
+    </div>
+  );
+}
+
+export function ErrorState({ error, onRetry, saved }: { error: ApiError | string; onRetry?: () => void; saved?: boolean }) {
+  const msg = typeof error === 'string' ? error : error.message;
+  return (
+    <div className="err-box" role="alert">
+      <span>
+        {msg}
+        {saved && <span style={{ display: 'block', fontWeight: 400, marginTop: 4 }}>Данные сохранены.</span>}
+      </span>
+      {onRetry && (
+        <Btn view="outlined" size={40} onClick={onRetry}>
+          Повторить
+        </Btn>
+      )}
+    </div>
+  );
+}
+
+export function RoleGuard({ allowed, role, children, what }: { allowed: boolean; role: Role; children: ReactNode; what: string }) {
+  if (allowed) return <>{children}</>;
+  return (
+    <div className="lock-box">
+      <Px name="lock" size={20} color="var(--c-gray)" />
+      <span>
+        {what} может владелец. Вы вошли как <b>{ROLE_NAME[role].toLowerCase()}</b>.
+      </span>
+    </div>
+  );
+}
+
+export function Loading({ lines = 3 }: { lines?: number }) {
+  return (
+    <div className="card" aria-busy="true" aria-label="Загрузка">
+      {Array.from({ length: lines }, (_, i) => (
+        <div key={i} className="skeleton" style={{ height: i === 0 ? 28 : 16, width: i === 0 ? '40%' : `${90 - i * 12}%` }} />
+      ))}
+    </div>
+  );
+}
+
+export function AiHint({ children, title = 'Подсказка ИИ', source, action }: { children: ReactNode; title?: string; source?: string; action?: ReactNode }) {
+  return (
+    <section className="ai-hint">
+      <div className="ttl">
+        <Px name="gem" size={18} color="var(--c-ai)" />
+        {title}
+      </div>
+      <p>{children}</p>
+      {source && <span className="ai-src">Источник: {source}</span>}
+      {action}
+    </section>
+  );
+}
+
+// ───── Модалка подтверждения ─────
+
+export function Confirm({ open, title, text, confirm, cancel = 'Отмена', onConfirm, onClose, danger, pending }: { open: boolean; title: string; text: ReactNode; confirm: string; cancel?: string; onConfirm: () => void; onClose: () => void; danger?: boolean; pending?: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    ref.current?.querySelector('button')?.focus();
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+  if (!open) return null;
+  return (
+    <div className="backdrop" onClick={onClose}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()} ref={ref}>
+        <h2 className="h2">{title}</h2>
+        <div>{text}</div>
+        <div className="btn-row">
+          <Btn view={danger ? 'primary' : 'accent'} onClick={onConfirm} loading={pending}>
+            {confirm}
+          </Btn>
+          <Btn view="outlined" onClick={onClose}>
+            {cancel}
+          </Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ───── Тосты ─────
+
+interface ToastState {
+  items: { id: number; text: string; err?: boolean }[];
+  push: (text: string, err?: boolean) => void;
+}
+export const useToasts = create<ToastState>((set) => ({
+  items: [],
+  push: (text, err) => {
+    const id = Date.now() + Math.random();
+    set((s) => ({ items: [...s.items, { id, text, err }] }));
+    setTimeout(() => set((s) => ({ items: s.items.filter((x) => x.id !== id) })), 4200);
+  },
+}));
+export const toast = (text: string, err?: boolean) => useToasts.getState().push(text, err);
+
+export function Toasts() {
+  const items = useToasts((s) => s.items);
+  return (
+    <div className="toasts" aria-live="polite">
+      {items.map((t) => (
+        <div key={t.id} className={`toast ${t.err ? 'err' : ''}`}>
+          {t.text}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ───── Загрузка файла ─────
+
+export function FileDrop({ onFile, formats, maxMb, disabled, label = 'Перетащите файл сюда или выберите на компьютере' }: { onFile: (f: File) => void; formats: string[]; maxMb: number; disabled?: boolean; label?: string }) {
+  const [over, setOver] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+  return (
+    <div
+      className={`drop ${over ? 'over' : ''}`}
+      onDragOver={(e) => {
+        e.preventDefault();
+        setOver(true);
+      }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setOver(false);
+        const f = e.dataTransfer.files?.[0];
+        if (f && !disabled) onFile(f);
+      }}
+    >
+      <div className="stack-s">
+        <b>{label}</b>
+        <span className="xs muted">
+          {formats.join(', ')} · до {maxMb} МБ
+        </span>
+      </div>
+      <input
+        ref={input}
+        type="file"
+        className="sr-only"
+        accept={formats.map((f) => '.' + f.toLowerCase()).join(',')}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) onFile(f);
+          e.target.value = '';
+        }}
+        disabled={disabled}
+        aria-label="Выбрать файл"
+      />
+      <Btn view="outlined" size={40} onClick={() => input.current?.click()} disabled={disabled}>
+        Выбрать файл
+      </Btn>
+    </div>
+  );
+}
+
+export function FileBox({ name, size, uploadedAt, right }: { name: string; size: number; uploadedAt?: string; right?: ReactNode }) {
+  const ext = name.split('.').pop()?.toUpperCase();
+  return (
+    <div className="filebox">
+      <span className="ico" aria-hidden="true">
+        {ext}
+      </span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
+        <div className="xs muted">
+          {(size / 1024 / 1024).toFixed(1).replace('.', ',')} МБ{uploadedAt ? ` · загружен ${date(uploadedAt)}` : ''}
+        </div>
+      </div>
+      {right}
+    </div>
+  );
+}
+
+export function PageTitle({ crumbs, title, right }: { crumbs?: ReactNode; title: ReactNode; right?: ReactNode }) {
+  return (
+    <div className="row-c between" style={{ alignItems: 'flex-end' }}>
+      <div>
+        {crumbs && <div className="small muted">{crumbs}</div>}
+        <h1 className="h1" style={{ marginTop: crumbs ? 6 : 0 }}>
+          {title}
+        </h1>
+      </div>
+      {right}
+    </div>
   );
 }
