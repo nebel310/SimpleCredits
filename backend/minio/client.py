@@ -49,23 +49,32 @@ class S3Client:
     
     
     async def ensure_bucket(self) -> None:
-        """Проверяет существование бакета. Если его нет - создаст"""
+        """Проверяет существование бакета и создаёт его при отсутствии"""
         try:
             async with self.get_client() as client:
                 await client.head_bucket(Bucket=self.bucket_name)
+            return
         except ClientError as e:
-            error_code = e.response.get("Error", {}).get('Code')
-            if error_code == "404":
-                try:
-                    async with self.get_client() as client:
-                        await client.create_bucket(Bucket=self.bucket_name)
-                except ClientError as creation_error:
-                    raise StorageError(
-                        f"Не удалось создать бакет: " + str(creation_error)
-                    ) from creation_error
+            error_code = e.response.get("Error", {}).get("Code")
+            if error_code != "404":
+                raise StorageError(
+                    f"Ошибка проверки бакета: {e}"
+                ) from e
         except Exception as e:
             raise StorageError(
-                f"Ошибка при работе с хранилищем: " + str(e)
+                f"Ошибка при работе с хранилищем: {e}"
+            ) from e
+
+        try:
+            async with self.get_client() as client:
+                await client.create_bucket(Bucket=self.bucket_name)
+        except ClientError as creation_error:
+            raise StorageError(
+                f"Не удалось создать бакет: {creation_error}"
+            ) from creation_error
+        except Exception as e:
+            raise StorageError(
+                f"Ошибка при создании бакета: {e}"
             ) from e
     
     
