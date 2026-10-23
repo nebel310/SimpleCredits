@@ -66,6 +66,7 @@ def main() -> None:
         *metric_columns,
         "seed",
         "n_samples",
+        "model_type",
         "model_version",
     ]
 
@@ -77,6 +78,7 @@ def main() -> None:
             **{column: run.data.metrics.get(column) for column in metric_columns},
             "seed": run.data.params.get("seed"),
             "n_samples": run.data.params.get("n_samples"),
+            "model_type": run.data.tags.get("model_type"),
             "model_version": run.data.tags.get("model_version"),
         }
         for run in runs

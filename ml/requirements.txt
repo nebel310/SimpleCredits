@@ -3,6 +3,7 @@ pandas==3.1.0
 scipy==1.18.1
 scikit-learn==1.9.1
 joblib==1.6.0
+catboost==1.2.10
 grpcio==1.84.1
 grpcio-tools==1.84.1
 grpcio-health-checking==1.84.1

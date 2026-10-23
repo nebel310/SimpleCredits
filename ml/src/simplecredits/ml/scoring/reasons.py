@@ -174,3 +174,45 @@ def compute_reasons(
         if len(reasons) >= top_k:
             break
     return reasons
+
+
+def compute_catboost_reasons(
+    model,
+    features_row: pd.DataFrame,
+    top_k: int = 5,
+) -> list[dict]:
+    from catboost import Pool
+
+    pool = Pool(features_row, cat_features=CATEGORICAL_FEATURES)
+    shap_values = model.get_feature_importance(data=pool, type="ShapValues")
+    contributions = shap_values[0][:-1]
+    ranked = sorted(
+        zip(features_row.columns, contributions, strict=True),
+        key=lambda item: abs(float(item[1])),
+        reverse=True,
+    )
+
+    reasons: list[dict] = []
+    for feature, contribution in ranked:
+        value = float(contribution)
+        if abs(value) < 1e-9:
+            continue
+        code, risky_text, safe_text = FEATURE_META.get(
+            feature, (feature.upper(), "Фактор повышенного риска", "Фактор снижения риска")
+        )
+        if value > 0:
+            description, impact = risky_text, "negative"
+        else:
+            description, impact = safe_text, "positive"
+        reasons.append(
+            {
+                "code": code,
+                "description": description,
+                "feature": feature,
+                "impact": impact,
+                "contribution": round(value, 6),
+            }
+        )
+        if len(reasons) >= top_k:
+            break
+    return reasons

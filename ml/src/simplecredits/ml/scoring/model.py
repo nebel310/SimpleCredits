@@ -9,7 +9,7 @@ import pandas as pd
 from simplecredits.ml.data.schema import normalize_raw_row
 from simplecredits.ml.features.features import build_features
 from simplecredits.ml.scoring.policy import PolicyDecision, evaluate_policy
-from simplecredits.ml.scoring.reasons import compute_reasons
+from simplecredits.ml.scoring.reasons import compute_catboost_reasons, compute_reasons
 
 RISK_GRADE_THRESHOLDS: tuple[tuple[str, float], ...] = (
     ("A", 0.02),
@@ -41,36 +41,63 @@ def pd_to_score(pd_value: float) -> int:
     return max(0, min(1000, int(round((1.0 - pd_value) * 1000))))
 
 
+class CatBoostProbabilityModel:
+    def __init__(self, model):
+        self.model = model
+
+    def predict_proba(self, features: pd.DataFrame):
+        return self.model.predict_proba(features)
+
+
 class CreditScorer:
     def __init__(self, artifact: dict):
         self.artifact = artifact
-        self.pipeline = artifact["pipeline"]
+        self.model_type = artifact.get("model_type", "logistic_scorecard")
         self.model_version = artifact.get("model_version", "unknown")
         self.feature_columns = artifact.get("feature_columns")
-        self.preprocessor = self.pipeline.named_steps["preprocessor"]
-        self.classifier = self.pipeline.named_steps["classifier"]
+        self.model = artifact.get("model")
+        self.pipeline = artifact.get("pipeline")
+        self.preprocessor = None
+        self.classifier = None
+        if self.model is None:
+            if self.pipeline is None:
+                raise ValueError("artifact must contain either model or pipeline")
+            self.preprocessor = self.pipeline.named_steps["preprocessor"]
+            self.classifier = self.pipeline.named_steps["classifier"]
 
     @classmethod
     def load(cls, path: str | Path) -> "CreditScorer":
         artifact = joblib.load(Path(path))
         return cls(artifact)
 
-    def predict_pd(self, raw_row: dict) -> float:
+    def _features(self, raw_row: dict) -> pd.DataFrame:
         features = build_features(pd.DataFrame([normalize_raw_row(raw_row)]))
         if self.feature_columns is not None:
             features = features[self.feature_columns]
-        probability = self.pipeline.predict_proba(features)[0][1]
-        return float(probability)
+        return features
+
+    def _predict_pd(self, features: pd.DataFrame) -> float:
+        if self.model is not None:
+            return float(self.model.predict_proba(features)[0][1])
+        return float(self.pipeline.predict_proba(features)[0][1])
+
+    def predict_pd(self, raw_row: dict) -> float:
+        return self._predict_pd(self._features(raw_row))
 
     def score(self, raw_row: dict, top_reasons: int = 5) -> ScoreResult:
         normalized = normalize_raw_row(raw_row)
-        features = build_features(pd.DataFrame([normalized]))
-        if self.feature_columns is not None:
-            features = features[self.feature_columns]
-
-        pd_value = float(self.pipeline.predict_proba(features)[0][1])
+        features = self._features(normalized)
+        pd_value = self._predict_pd(features)
         risk_grade = pd_to_risk_grade(pd_value)
-        reasons = compute_reasons(self.preprocessor, self.classifier, features, top_k=top_reasons)
+        if self.model is not None:
+            reasons = compute_catboost_reasons(self.model, features, top_k=top_reasons)
+        else:
+            reasons = compute_reasons(
+                self.preprocessor,
+                self.classifier,
+                features,
+                top_k=top_reasons,
+            )
         return ScoreResult(
             score=pd_to_score(pd_value),
             pd=pd_value,
