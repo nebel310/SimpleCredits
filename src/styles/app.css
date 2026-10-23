@@ -52,3 +52,6 @@ h1, h2, h3 { margin: 0; font-family: var(--f-display); font-weight: 600; line-he
 .red-card { background: var(--c-red); color: #fff; }
 .red-card .muted { color: #fff; }
 .red-card .dl > div { border-color: var(--c-black); }
+
+/* ───── Пиксели ───── */
+.px { display: block; flex: none; }
