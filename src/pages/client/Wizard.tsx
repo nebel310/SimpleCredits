@@ -1,11 +1,11 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { api, ApiError, type ApplicationView, type BusinessGoal, type ChancesResult, type Company, type ProductCode } from '../../api';
+import { api, ApiError, type ApplicationView, type BusinessGoal, type ChancesResult, type Company, type ExtractedField, type ProductCode } from '../../api';
 import { GOALS, PRODUCTS, productByCode } from '../../api/catalog';
 import { useAction, useQuery, useSession } from '../../lib/hooks';
-import { date, dateTime, money, time } from '../../lib/format';
+import { date, dateTime, money, pct, time } from '../../lib/format';
 import { monthlyLoad, overdraftCost, termOptions } from '../../lib/calc';
-import { AiHint, Btn, Chip, ErrorState, Loading, MoneyField, PageTitle, RoleGuard, SelectField, TextField, Tracker, toast } from '../../ui/kit';
+import { AiHint, Btn, Chip, ErrorState, FileBox, FileDrop, Loading, MoneyField, PageTitle, RadioGroup, RoleGuard, SelectField, SourceTag, TextField, Tracker, toast } from '../../ui/kit';
 import { Px } from '../../ui/Px';
 import { useAiScreen } from '../../ai/AiAssistant';
 import { COMPANY_SHORT } from '../../lib/companies';
@@ -79,9 +79,11 @@ export function Wizard() {
     <>
       <PageTitle crumbs={`Заявки › Новая заявка № ${app.number}`} title="Новая заявка" right={<span className="small muted">Черновик сохраняется сам · {time(app.updatedAt)}</span>} />
       <Tracker index={idx} labels={STEP_LABEL} />
+      {app.delegatedToAccountant && user!.role === 'owner' && step === 'finance' && <div className="info-box">Вы передали финансы бухгалтеру. Можно дождаться его или заполнить самому — черновик общий.</div>}
       {app.delegatedToAccountant && user!.role === 'accountant' && <div className="info-box"><b>Задача от владельца:</b> заполнить финансы. Отправит заявку владелец.</div>}
       {step === 'goal' && <GoalStep app={app} setApp={setApp} chances={chances.data} />}
       {step === 'company' && <CompanyStep app={app} setApp={setApp} />}
+      {step === 'finance' && <FinanceStep app={app} setApp={setApp} />}
       <p className="xs muted" style={{ margin: 0 }}>
         Прототип для Альфа-Хак 2026 · данные синтетические
       </p>
@@ -525,6 +527,254 @@ function CompanyStep({ app, setApp }: StepProps) {
         <>
           <Summary app={app} extra={<div><dt style={{ color: '#fff' }}>Компания</dt><dd>{COMPANY_SHORT[app.companyId]}</dd></div>} />
           <AiHint>Проверьте название и руководителя. Если в реестре устаревшие данные, нажмите «Нет, другая» и опишите, что не так — банк проверит. Это не отказ.</AiHint>
+        </>
+      }
+    />
+  );
+}
+
+// ───────── Шаг 3: финансы ─────────
+
+function FinanceStep({ app, setApp }: StepProps) {
+  const { session } = useSession();
+  const nav = useNavigate();
+  const f = app.finance;
+  const [hasLoans, setHasLoans] = useState<'yes' | 'no' | null>(f.hasLoans === null ? null : f.hasLoans ? 'yes' : 'no');
+  const [payments, setPayments] = useState<number | null>(f.loanPayments);
+  const [guarantor, setGuarantor] = useState(f.guarantor);
+  const [gName, setGName] = useState(f.guarantorName);
+  const [comment, setComment] = useState(f.comment);
+  const [fileErr, setFileErr] = useState<string | null>(null);
+  const [fields, setFields] = useState<ExtractedField[]>(f.statement?.fields ?? []);
+  const [tried, setTried] = useState(false);
+
+  useEffect(() => {
+    setFields(app.finance.statement?.fields ?? []);
+  }, [app.finance.statement?.status, app.finance.statement?.fields.length]);
+
+  useAiScreen('Новая заявка: финансы', { appId: app.id, chips: ['Что такое поручитель?', 'Зачем выписка из другого банка?', 'Что такое денежный поток?'] });
+
+  const missing = useMemo(() => {
+    const m: string[] = [];
+    if (hasLoans === null) m.push('Укажите, есть ли у бизнеса кредиты');
+    if (hasLoans === 'yes' && (!payments || payments <= 0)) m.push('Укажите платёж по кредитам в месяц');
+    if (f.revenueYear.value === null && app.finance.statement?.status !== 'confirmed') m.push('Отчётности в ФНС нет — приложите выписку и подтвердите поля');
+    if (guarantor === 'third_party' && gName.trim().length < 3) m.push('Укажите поручителя');
+    if (app.finance.statement && ['extracting', 'check'].includes(app.finance.statement.status)) m.push('Подтвердите поля из выписки или удалите файл');
+    return m;
+  }, [hasLoans, payments, f.revenueYear.value, app.finance.statement, guarantor, gName]);
+
+  const save = useAction(async (_k, go: boolean) => {
+    const v = await api.updateDraft(session!, app.id, { finance: { hasLoans: hasLoans === null ? null : hasLoans === 'yes', loanPayments: hasLoans === 'yes' ? payments : null, guarantor, guarantorName: gName, comment } });
+    setApp(v);
+    if (go) nav('/apply/review');
+  });
+  const upload = useAction(async (_k, file: File) => {
+    const v = await api.uploadStatement(session!, app.id, { name: file.name, size: file.size, type: file.type });
+    setApp(v);
+  });
+  const confirmFields = useAction(async () => {
+    const v = await api.confirmStatementFields(session!, app.id, fields);
+    setApp(v);
+    toast('Данные выписки подтверждены');
+  });
+  const remove = useAction(async () => {
+    const v = await api.removeStatement(session!, app.id);
+    setApp(v);
+  });
+
+  const onFile = (file: File) => {
+    setFileErr(null);
+    const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+    if (!['pdf', 'xlsx', 'xls', 'csv'].includes(ext)) return setFileErr('Подойдут выписки в PDF, XLSX или CSV');
+    if (file.size > 10 * 1024 * 1024) return setFileErr('Файл больше 10 МБ');
+    upload.run(file);
+  };
+
+  const st = app.finance.statement;
+  const trend = f.inflowTrendPct.value ?? 0;
+
+  return (
+    <Layout
+      main={
+        <>
+          <h2 className="h2">Финансы</h2>
+          <div className="grid-2" style={{ gap: 16 }}>
+            <div className="panel">
+              <div className="row-c between">
+                <span className="small muted">Выручка за год</span>
+                <SourceTag origin={f.revenueYear.origin} />
+              </div>
+              <span className="h2">{f.revenueYear.value === null ? 'Нет данных' : money(f.revenueYear.value)}</span>
+              <span className="xs muted">
+                {f.revenueYear.source}, на {date(f.revenueYear.asOf)}
+              </span>
+            </div>
+            <div className="panel">
+              <div className="row-c between">
+                <span className="small muted">Поступления на счёт, в среднем в месяц</span>
+                <SourceTag origin={f.inflows3m.origin} />
+              </div>
+              <span className="h2">{money(f.inflows3m.value)}</span>
+              <span className="xs" style={{ color: trend < -10 ? 'var(--c-negative-ink)' : 'var(--c-text-2)', fontWeight: trend < -10 ? 600 : 400 }}>
+                {trend < 0 ? `За 3 месяца: −${pct(Math.abs(trend), 0)}` : trend > 0 ? `За 3 месяца: +${pct(trend, 0)}` : 'Без изменений'} · {f.inflows3m.source}, на {date(f.inflows3m.asOf)}
+              </span>
+            </div>
+          </div>
+          {f.revenueYear.value === null && <div className="warn-box">Отчётности в ФНС ещё нет. Приложите выписку по счетам ниже — без неё банк не сможет оценить выручку.</div>}
+
+          <div className="field">
+            <span className="lbl">Есть ли у бизнеса кредиты и лизинг сейчас?</span>
+            <RadioGroup
+              name="loans"
+              row
+              value={hasLoans}
+              onChange={setHasLoans}
+              options={[
+                { value: 'yes', label: 'Есть' },
+                { value: 'no', label: 'Нет' },
+              ]}
+            />
+            {tried && hasLoans === null && <span className="err">Выберите вариант</span>}
+          </div>
+          {hasLoans === 'yes' && (
+            <div style={{ maxWidth: 360 }}>
+              <MoneyField label="Платёж по всем кредитам в месяц" value={payments} onChange={setPayments} error={tried && (!payments || payments <= 0) ? 'Укажите сумму больше нуля' : null} hint="Вы указали · банк сверит с кредитной историей" />
+            </div>
+          )}
+
+          <div className="field">
+            <span className="lbl">Поручитель</span>
+            <RadioGroup
+              name="guarantor"
+              value={guarantor}
+              onChange={setGuarantor}
+              options={[
+                { value: 'none', label: 'Без поручителя' },
+                { value: 'owner', label: 'Владелец бизнеса', hint: 'Владелец тоже подпишет договор поручительства' },
+                { value: 'third_party', label: 'Другой человек или компания' },
+              ]}
+            />
+          </div>
+          {guarantor === 'third_party' && (
+            <div style={{ maxWidth: 420 }}>
+              <TextField label="Кто поручитель" value={gName} onChange={setGName} hint="ФИО или название компании. Банк пришлёт поручителю задачу в кабинете" error={tried && gName.trim().length < 3 ? 'Укажите поручителя' : null} />
+            </div>
+          )}
+
+          <label className="field">
+            <span className="lbl">Комментарий для банка</span>
+            <textarea className="native" value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Например: сезонный спад, в ноябре поступления вернутся" />
+            <span className="hint">Банк увидит комментарий при рассмотрении</span>
+          </label>
+
+          <div className="stack-s">
+            <div className="row-c between">
+              <b>Выписка из другого банка</b>
+              <span className="xs muted">{f.revenueYear.value === null ? 'обязательно для вашей заявки' : 'по желанию'}</span>
+            </div>
+            <span className="small muted">Если часть оборотов идёт через другой банк, выписка поможет уточнить оценку. Цифры распознаем сами — вы только проверите.</span>
+            {!st && <FileDrop onFile={onFile} formats={['PDF', 'XLSX', 'CSV']} maxMb={10} disabled={upload.pending} />}
+            {upload.pending && (
+              <div className="info-box">
+                <span className="spin" style={{ width: 14, height: 14, marginRight: 8 }} /> Загружаем файл…
+              </div>
+            )}
+            {(fileErr || upload.error) && <ErrorState error={fileErr ?? upload.error!} />}
+            {st && (
+              <>
+                <FileBox
+                  name={st.file.name}
+                  size={st.file.size}
+                  uploadedAt={st.file.uploadedAt}
+                  right={
+                    <div className="row-c">
+                      <Chip kind={st.status === 'confirmed' ? 'high' : st.status === 'extracting' ? 'mid' : st.status === 'error' ? 'low' : 'attention'}>
+                        {st.status === 'extracting' ? 'Распознаём' : st.status === 'check' ? 'Проверьте поля' : st.status === 'confirmed' ? 'Подтверждено' : 'Ошибка'}
+                      </Chip>
+                      <button type="button" className="linkbtn muted" onClick={() => remove.run()}>
+                        {st.status === 'confirmed' ? 'Заменить' : 'Удалить'}
+                      </button>
+                    </div>
+                  }
+                />
+                {st.status === 'extracting' && (
+                  <div className="ai-hint" style={{ padding: 16 }}>
+                    <div className="ttl">
+                      <span className="spin" style={{ width: 14, height: 14 }} /> ИИ распознаёт выписку…
+                    </div>
+                  </div>
+                )}
+                {(st.status === 'check' || st.status === 'confirmed') && (
+                  <div className="ai-hint" style={{ padding: 18 }}>
+                    <div className="ttl">
+                      <Px name="gem" size={16} color="var(--c-ai)" />
+                      {st.error ? 'Не удалось распознать — заполните вручную' : 'ИИ распознал поля — проверьте'}
+                    </div>
+                    {st.error && <span className="small">{st.error}</span>}
+                    <div className="grid-fields">
+                      {fields.map((fl, i) => (
+                        <TextField
+                          key={fl.key}
+                          label={fl.label}
+                          value={fl.value}
+                          disabled={st.status === 'confirmed'}
+                          onChange={(v) => setFields(fields.map((x, j) => (j === i ? { ...x, value: v } : x)))}
+                          hint={st.status === 'confirmed' ? 'Подтверждено вами' : st.error ? 'Вы указали' : 'Из файла'}
+                        />
+                      ))}
+                    </div>
+                    {st.status === 'check' && (
+                      <div className="btn-row">
+                        <Btn view="primary" size={40} onClick={() => confirmFields.run()} loading={confirmFields.pending} disabled={fields.some((x) => !x.value.trim())}>
+                          Всё верно, подтвердить
+                        </Btn>
+                        {confirmFields.error && <span className="xs" style={{ color: 'var(--c-negative-ink)' }}>{confirmFields.error.message}</span>}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {tried && missing.length > 0 && (
+            <div className="err-box" style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
+              <span>Чтобы продолжить, нужно:</span>
+              <ul style={{ margin: 0, paddingLeft: 20, fontWeight: 400 }}>
+                {missing.map((m) => (
+                  <li key={m}>{m}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <div className="btn-row">
+            <Btn
+              view="accent"
+              loading={save.pending}
+              onClick={() => {
+                setTried(true);
+                if (!missing.length) save.run(true);
+                else save.run(false);
+              }}
+            >
+              Дальше: подтверждение
+            </Btn>
+            <Btn view="outlined" to="/apply/company">
+              Назад
+            </Btn>
+          </div>
+          {save.error && <ErrorState error={save.error} />}
+        </>
+      }
+      side={
+        <>
+          <Summary app={app} />
+          {trend < -10 ? (
+            <AiHint source={`${f.inflows3m.source}, на ${date(f.inflows3m.asOf)}`}>Поступления за последние 3 месяца упали на {Math.abs(trend)}%. Если это сезонность, напишите об этом в комментарии — банк увидит. Если часть оборотов в другом банке — приложите выписку.</AiHint>
+          ) : (
+            <AiHint>Цифры выручки и оборотов мы уже подтянули из ФНС и вашего счёта. Вам осталось ответить про кредиты и поручителя.</AiHint>
+          )}
         </>
       }
     />
