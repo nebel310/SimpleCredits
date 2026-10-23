@@ -1,13 +1,14 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { api, ApiError, type ApplicationView, type BusinessGoal, type ChancesResult, type ProductCode } from '../../api';
+import { api, ApiError, type ApplicationView, type BusinessGoal, type ChancesResult, type Company, type ProductCode } from '../../api';
 import { GOALS, PRODUCTS, productByCode } from '../../api/catalog';
 import { useAction, useQuery, useSession } from '../../lib/hooks';
-import { dateTime, money, time } from '../../lib/format';
+import { date, dateTime, money, time } from '../../lib/format';
 import { monthlyLoad, overdraftCost, termOptions } from '../../lib/calc';
-import { AiHint, Btn, Chip, ErrorState, Loading, MoneyField, PageTitle, RoleGuard, SelectField, Tracker } from '../../ui/kit';
+import { AiHint, Btn, Chip, ErrorState, Loading, MoneyField, PageTitle, RoleGuard, SelectField, TextField, Tracker, toast } from '../../ui/kit';
 import { Px } from '../../ui/Px';
 import { useAiScreen } from '../../ai/AiAssistant';
+import { COMPANY_SHORT } from '../../lib/companies';
 
 const STEPS = ['goal', 'company', 'finance', 'review'] as const;
 type Step = (typeof STEPS)[number];
@@ -80,6 +81,7 @@ export function Wizard() {
       <Tracker index={idx} labels={STEP_LABEL} />
       {app.delegatedToAccountant && user!.role === 'accountant' && <div className="info-box"><b>Задача от владельца:</b> заполнить финансы. Отправит заявку владелец.</div>}
       {step === 'goal' && <GoalStep app={app} setApp={setApp} chances={chances.data} />}
+      {step === 'company' && <CompanyStep app={app} setApp={setApp} />}
       <p className="xs muted" style={{ margin: 0 }}>
         Прототип для Альфа-Хак 2026 · данные синтетические
       </p>
@@ -324,5 +326,207 @@ function CompareOverdraft({ product, amount, term, onPick }: { product: ProductC
         Выбрать овердрафт — сумма и срок сохранятся
       </button>
     </div>
+  );
+}
+
+// ───────── Шаг 2: компания ─────────
+
+function CompanyStep({ app, setApp }: StepProps) {
+  const { session, user } = useSession();
+  const company = useQuery(() => api.getCompany(session!, app.companyId), [app.companyId], { live: false });
+  const [inn, setInn] = useState('');
+  const [state, setState] = useState<'idle' | 'searching' | 'found' | 'not_found' | 'unavailable' | 'invalid' | 'manual'>(app.companyConfirmed ? 'found' : 'idle');
+  const [found, setFound] = useState<Company | null>(null);
+  const [msg, setMsg] = useState('');
+  const [asOf, setAsOf] = useState<string | undefined>();
+  const [note, setNote] = useState(app.manualCompanyNote ?? '');
+
+  useEffect(() => {
+    if (company.data && !inn) setInn(company.data.inn);
+    if (company.data && app.companyConfirmed === 'registry' && !found) setFound(company.data);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [company.data]);
+
+  useAiScreen('Новая заявка: компания', { appId: app.id, chips: ['Что такое ОКВЭД?', 'Что если в реестре старые данные?'] });
+
+  const search = async () => {
+    setState('searching');
+    try {
+      const r = await api.lookupCompany(session!, app.id, inn);
+      setMsg(r.message ?? '');
+      setAsOf(r.asOf);
+      if (r.status === 'found') {
+        setFound(r.company!);
+        setState('found');
+      } else setState(r.status);
+    } catch (e) {
+      setMsg((e as ApiError).message);
+      setState('unavailable');
+    }
+  };
+
+  const confirm = useAction(async (_k, how: 'registry' | 'manual') => {
+    const v = await api.confirmCompany(session!, app.id, how, how === 'manual' ? note : undefined);
+    setApp(v);
+    toast(how === 'registry' ? 'Компания подтверждена' : 'Уточнение сохранено');
+  });
+  const delegate = useAction(async () => {
+    const v = await api.updateDraft(session!, app.id, { delegatedToAccountant: true });
+    setApp(v);
+  });
+
+  const isIp = found?.type === 'IP';
+  const ready = !!app.companyConfirmed;
+
+  return (
+    <Layout
+      main={
+        <>
+          <h2 className="h2">Ваша компания</h2>
+          <div className="row-c" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
+            <div style={{ flex: 1 }}>
+              <TextField label="ИНН компании или ИП" value={inn} onChange={(v) => setInn(v.replace(/\D/g, '').slice(0, 12))} inputMode="numeric" error={state === 'invalid' ? msg : null} hint="Остальное подтянем из ЕГРЮЛ/ЕГРИП сами" />
+            </div>
+            <div style={{ paddingTop: 27 }}>
+              <Btn view="secondary" onClick={search} loading={state === 'searching'} disabled={inn.length < 10}>
+                Найти
+              </Btn>
+            </div>
+          </div>
+
+          {state === 'searching' && (
+            <div className="panel" aria-busy="true">
+              <div className="skeleton" style={{ height: 22, width: '50%' }} />
+              <div className="skeleton" style={{ height: 14, width: '80%' }} />
+              <span className="xs muted">Ищем в реестре ФНС…</span>
+            </div>
+          )}
+          {state === 'not_found' && <ErrorState error={msg} />}
+          {state === 'unavailable' && (
+            <div className="stack-s">
+              <ErrorState error={msg} onRetry={search} saved />
+              <button type="button" className="linkbtn" style={{ alignSelf: 'flex-start' }} onClick={() => setState('manual')}>
+                Уточнить данные вручную
+              </button>
+            </div>
+          )}
+
+          {state === 'found' && found && (
+            <div style={{ border: '2px solid var(--c-black)', borderRadius: 20, padding: 24, display: 'flex', flexDirection: 'column', gap: 18 }}>
+              <div className="row-c between">
+                <div>
+                  <div className="xs muted">{ready ? 'Ваша компания' : 'Это ваша компания?'}</div>
+                  <div className="h2" style={{ marginTop: 4 }}>
+                    {found.name}
+                  </div>
+                </div>
+                <div className="row-c">
+                  <Chip kind="high">Действующая</Chip>
+                  {app.companyConfirmed === 'registry' && <Chip kind="dark">Подтверждено</Chip>}
+                </div>
+              </div>
+              <dl className="dl-grid">
+                <div>
+                  <dt>{isIp ? 'ИНН · ОГРНИП' : 'ИНН · ОГРН'}</dt>
+                  <dd>
+                    {found.inn} · {found.ogrn}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Дата регистрации</dt>
+                  <dd>{date(found.regDate)}</dd>
+                </div>
+                <div>
+                  <dt>{isIp ? 'Индивидуальный предприниматель' : 'Руководитель'}</dt>
+                  <dd>{found.head}</dd>
+                </div>
+                <div>
+                  <dt>Сотрудников</dt>
+                  <dd>{found.employees}</dd>
+                </div>
+                <div>
+                  <dt>Основной ОКВЭД</dt>
+                  <dd>
+                    {found.okved} · {found.okvedName}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Адрес</dt>
+                  <dd>{found.address}</dd>
+                </div>
+              </dl>
+              <div className="xs muted">
+                Источник: {isIp ? 'ЕГРИП' : 'ЕГРЮЛ'}, данные на {date(asOf ?? app.updatedAt)}. Сведения реестра не подтверждают ваши полномочия — их проверит банк при рассмотрении.
+              </div>
+              {!ready && (
+                <div className="btn-row">
+                  <Btn view="primary" onClick={() => confirm.run('registry')} loading={confirm.pending}>
+                    Да, это моя компания
+                  </Btn>
+                  <Btn view="outlined" onClick={() => setState('manual')}>
+                    Нет, другая
+                  </Btn>
+                </div>
+              )}
+            </div>
+          )}
+
+          {state === 'manual' && (
+            <div className="panel">
+              <b>Уточните данные</b>
+              <span className="small muted">Проверьте ИНН выше и нажмите «Найти» ещё раз. Если в реестре устаревшие сведения — опишите, что не так. Банк проверит это при рассмотрении.</span>
+              <label className="field">
+                <span className="lbl">Что не совпадает</span>
+                <textarea className="native" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Например: сменился руководитель 01.10.2026, в реестре ещё старые данные" />
+              </label>
+              <div className="btn-row">
+                <Btn view="primary" onClick={() => confirm.run('manual')} disabled={note.trim().length < 5} loading={confirm.pending}>
+                  Сохранить уточнение
+                </Btn>
+                <button type="button" className="linkbtn muted" onClick={() => setState(found ? 'found' : 'idle')}>
+                  Отмена
+                </button>
+              </div>
+            </div>
+          )}
+          {app.companyConfirmed === 'manual' && <div className="info-box">Данные компании уточнены вручную: «{app.manualCompanyNote}». Банк проверит их при рассмотрении.</div>}
+
+          {user!.role === 'owner' && (
+            <div className="panel row-panel">
+              <span aria-hidden="true" style={{ width: 44, height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#fff', fontWeight: 700 }}>
+                БХ
+              </span>
+              <div style={{ flex: '1 1 320px' }}>
+                <b>Финансы может заполнить бухгалтер</b>
+                <div className="small muted">Бухгалтер увидит задачу в своём кабинете. Отправляете и подписываете всё равно вы.</div>
+              </div>
+              {app.delegatedToAccountant ? (
+                <Chip kind="mid">Передано · ожидаем заполнения финансов</Chip>
+              ) : (
+                <Btn view="outlined" size={40} onClick={() => delegate.run()} loading={delegate.pending}>
+                  Передать бухгалтеру
+                </Btn>
+              )}
+            </div>
+          )}
+          {confirm.error && <ErrorState error={confirm.error} />}
+          <div className="btn-row">
+            <Btn view="accent" to="/apply/finance" disabled={!ready}>
+              Дальше: финансы
+            </Btn>
+            <Btn view="outlined" to="/apply/goal">
+              Назад
+            </Btn>
+            {!ready && <span className="xs muted">Подтвердите компанию или уточните данные вручную</span>}
+          </div>
+        </>
+      }
+      side={
+        <>
+          <Summary app={app} extra={<div><dt style={{ color: '#fff' }}>Компания</dt><dd>{COMPANY_SHORT[app.companyId]}</dd></div>} />
+          <AiHint>Проверьте название и руководителя. Если в реестре устаревшие данные, нажмите «Нет, другая» и опишите, что не так — банк проверит. Это не отказ.</AiHint>
+        </>
+      }
+    />
   );
 }
