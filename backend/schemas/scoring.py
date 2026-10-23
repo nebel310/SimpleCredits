@@ -147,7 +147,7 @@ class SScoreApplicationResponse(BaseModel):
     risk_grade: RiskGrade
     reason_codes: list[SReasonCode]
     model_version: str
-    scored_at: datetime
+    scored_at: datetime | None = None
     decision: SDecisionResult | None = None
 
     model_config = ConfigDict(

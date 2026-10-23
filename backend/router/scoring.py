@@ -16,6 +16,7 @@ from ml_grpc.mappers import (
     proto_to_schema_response,
     schema_to_proto_score_request,
 )
+from datetime import datetime, timezone
 from models.auth import UserOrm
 from repositories.scoring import ScoringRepository
 from schemas.base import ErrorResponse, ValidationErrorResponse
@@ -93,7 +94,7 @@ async def create_application(
             "pd": response.pd,
             "risk_grade": response.risk_grade,
             "model_version": response.model_version,
-            "scored_at": response.scored_at,
+            "scored_at": response.scored_at or datetime.now(timezone.utc),
             "decision": response.decision.decision if response.decision else None,
             "reason_codes": [rc.model_dump() for rc in response.reason_codes],
             "conditions": (
