@@ -39,6 +39,33 @@ h1, h2, h3 { margin: 0; font-family: var(--f-display); font-weight: 600; line-he
 .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 20px; align-items: stretch; }
 .grid-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 16px; align-items: start; }
 
+/* ───── Шапка ───── */
+.hdr { background: var(--c-white); }
+.hdr-in { min-height: 76px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 28px; }
+.hdr.dark { background: var(--c-black); color: #fff; }
+.hdr.demo { background: var(--c-ai); color: #fff; }
+.brand { display: flex; align-items: center; gap: 12px; font-family: var(--f-display); font-size: 15px; font-weight: 600; text-decoration: none; color: inherit; }
+.logo-slot { width: 40px; height: 40px; flex: none; display: flex; align-items: center; justify-content: center; border: 1.5px dashed var(--c-gray); border-radius: 8px; font: 700 9px/1 var(--f-text); letter-spacing: 0.06em; color: var(--c-gray); }
+.hdr.dark .logo-slot, .hdr.demo .logo-slot { border-color: rgba(255,255,255,.6); color: rgba(255,255,255,.8); }
+.nav { display: flex; gap: 6px; flex-wrap: wrap; }
+.nav a { display: flex; align-items: center; min-height: 44px; padding: 0 16px; border-radius: 999px; text-decoration: none; color: var(--c-text-2); }
+.nav a:hover { color: var(--c-text); background: var(--c-bg); }
+.nav a.active { background: var(--c-black); color: #fff; font-weight: 600; }
+.hdr.dark .nav a { color: #babbc2; }
+.hdr.dark .nav a:hover { background: #3f3f45; color: #fff; }
+.hdr.dark .nav a.active, .hdr.demo .nav a.active { background: #fff; color: var(--c-black); }
+.hdr.demo .nav a { color: #ede5fb; }
+.hdr.demo .nav a:hover { background: rgba(255,255,255,.14); color: #fff; }
+.hdr-right { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.who { display: flex; flex-direction: column; align-items: flex-start; min-height: 44px; justify-content: center; padding: 6px 14px; border: 0; border-radius: 12px; background: var(--c-bg); color: var(--c-text); text-align: left; cursor: pointer; }
+.who b { font-size: 14px; }
+.who span { font-size: 12px; color: var(--c-text-2); }
+.hdr.dark .who { background: #3f3f45; color: #fff; }
+.hdr.dark .who span { color: #babbc2; }
+.hdr.demo .who { background: rgba(255,255,255,.16); color: #fff; }
+.hdr.demo .who span { color: #ede5fb; }
+.proto { font-size: 12px; font-weight: 600; padding: 6px 10px; background: var(--c-lime); color: var(--c-lime-ink); }
+
 /* ───── Карточки ───── */
 .card { background: var(--c-white); border-radius: var(--r-card); padding: 28px; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .card.tight { padding: 22px; gap: 12px; }
