@@ -109,6 +109,8 @@ class SScoreApplicationRequest(BaseModel):
     company: SCompany
     financials: SFinancials
     credit_history: SCreditHistory
+    extra_numeric_features: dict[str, float] = Field(default_factory=dict, max_length=512)
+    extra_categorical_features: dict[str, str] = Field(default_factory=dict, max_length=512)
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -152,6 +154,14 @@ class SScoreApplicationRequest(BaseModel):
                         "credit_utilization": 0.2,
                         "closed_obligations_count": 5,
                         "applications_last_6m": 0,
+                    },
+                    "extra_numeric_features": {
+                        "bki_credit_score": 750,
+                        "tax_debt_rub": 0,
+                    },
+                    "extra_categorical_features": {
+                        "client_rating": "A",
+                        "tax_regime": "usn",
                     },
                 }
             ]

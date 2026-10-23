@@ -33,9 +33,9 @@ CATBOOST_MODEL_VERSION = "catboost-v1"
 DEFAULT_CATBOOST_MODEL_PATH = Path("artifacts/catboost_model.joblib")
 CATBOOST_PARAMS: dict[str, Any] = {
     "iterations": 400,
-    "learning_rate": 0.04,
-    "depth": 4,
-    "l2_leaf_reg": 3.0,
+    "learning_rate": 0.03,
+    "depth": 2,
+    "l2_leaf_reg": 10.0,
     "loss_function": "Logloss",
     "eval_metric": "AUC",
     "random_seed": 42,

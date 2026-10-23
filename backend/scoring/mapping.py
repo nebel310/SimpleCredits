@@ -119,6 +119,9 @@ def to_proto_request(request: SScoreApplicationRequest) -> scoring_pb2.ScoreAppl
     message.credit_history.closed_obligations_count = history.closed_obligations_count
     message.credit_history.applications_last_6m = history.applications_last_6m
 
+    message.extra_numeric_features.update(request.extra_numeric_features)
+    message.extra_categorical_features.update(request.extra_categorical_features)
+
     return message
 
 

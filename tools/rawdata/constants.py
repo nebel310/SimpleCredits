@@ -6,7 +6,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT = REPO_ROOT / "data" / "raw"
 NOW = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
 MODEL_VERSION = "scorecard-linear-v1"
 
 TABLE_ORDER = [
@@ -78,6 +78,7 @@ TABLE_ORDER = [
     "policy_decisions",
     "offers",
     "loan_contracts",
+    "loan_default_events",
     "documents",
     "audit_log",
 ]

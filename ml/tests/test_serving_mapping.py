@@ -1,3 +1,4 @@
+import pytest
 from google.protobuf.timestamp_pb2 import Timestamp
 
 from simplecredits.ml.scoring.model import ScoreResult
@@ -35,6 +36,8 @@ def test_request_to_raw_row_maps_proto_fields():
             has_current_past_due=False,
             credit_utilization=0.3,
         ),
+        extra_numeric_features={"bki_credit_score": 750.0, "tax_debt_rub": 0.0},
+        extra_categorical_features={"client_rating": "A", "tax_regime": "usn"},
     )
 
     row = request_to_raw_row(request)
@@ -44,6 +47,28 @@ def test_request_to_raw_row_maps_proto_fields():
     assert row["employee_count"] == 12
     assert row["has_current_past_due"] is False
     assert row["company_age_months"] == 0
+    assert row["bki_credit_score"] == 750.0
+    assert row["tax_debt_rub"] == 0.0
+    assert row["client_rating"] == "A"
+    assert row["tax_regime"] == "usn"
+
+
+def test_request_to_raw_row_rejects_unknown_features():
+    request = scoring_pb2.ScoreApplicationRequest(
+        application_id="app-2",
+        extra_numeric_features={"unknown_numeric": 1.0},
+        extra_categorical_features={"unknown_categorical": "x"},
+    )
+
+    with pytest.raises(ValueError, match="unknown numeric features"):
+        request_to_raw_row(request)
+
+    request = scoring_pb2.ScoreApplicationRequest(
+        application_id="app-3",
+        extra_categorical_features={"unknown_categorical": "x"},
+    )
+    with pytest.raises(ValueError, match="unknown categorical features"):
+        request_to_raw_row(request)
 
 def test_to_response_maps_policy_decision():
     result = ScoreResult(

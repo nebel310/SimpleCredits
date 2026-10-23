@@ -53,6 +53,8 @@ def make_request() -> SScoreApplicationRequest:
                 "closed_obligations_count": 5,
                 "applications_last_6m": 0,
             },
+            "extra_numeric_features": {"bki_credit_score": 750.0},
+            "extra_categorical_features": {"client_rating": "A"},
         }
     )
 
@@ -69,6 +71,8 @@ def test_to_proto_request_maps_nested_fields_and_enums():
     assert message.company.employee_count == 30
     assert message.financials.annual_revenue_rub == 120000000
     assert message.credit_history.monthly_debt_payments_rub == 150000
+    assert message.extra_numeric_features["bki_credit_score"] == 750.0
+    assert message.extra_categorical_features["client_rating"] == "A"
 
 
 def test_to_proto_request_maps_timestamps():

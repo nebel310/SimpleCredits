@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 
 from simplecredits.ml.data.generator import generate_dataset
+from simplecredits.ml.data.schema import DEFAULT_RAW_ROW
 from simplecredits.ml.features.features import FEATURE_COLUMNS, build_features
 
 
@@ -16,6 +17,7 @@ def test_build_features_has_expected_columns_and_no_invalid_values():
 
 def test_build_features_handles_zero_denominators():
     row = {
+        **DEFAULT_RAW_ROW,
         "company_age_months": 12,
         "employee_count": 0,
         "okved_risk": 0.5,

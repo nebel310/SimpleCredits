@@ -320,8 +320,8 @@ def raw_db(tmp_path: Path) -> Path:
         "bank_internal_history": bank_internal_history,
     }
 
-    for table in RAW_TABLES:
-        tables[table].to_sql(table, connection, if_exists="replace", index=False)
+    for table, frame in tables.items():
+        frame.to_sql(table, connection, if_exists="replace", index=False)
     connection.close()
     return db_path
 
@@ -389,7 +389,7 @@ def test_run_pipeline_writes_csv_and_manifest(raw_db, tmp_path):
     assert output.exists()
     assert output.with_suffix(".manifest.json").exists()
     assert len(frame) == 2
-    assert report.pipeline_version == "raw-as-of-v2"
+    assert report.pipeline_version == "raw-as-of-v3"
     assert report.output_path == str(output.resolve())
     assert report.db_sha256
     assert report.observation_horizon_days == 90
