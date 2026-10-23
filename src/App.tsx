@@ -1,8 +1,10 @@
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { isBankRole } from './api';
 import { useSession } from './lib/hooks';
+import { ClientLayout } from './layout/Layouts';
 import { Toasts } from './ui/kit';
 import { Login } from './pages/Login';
+import { Dashboard } from './pages/client/Dashboard';
 
 function Home() {
   const user = useSession((s) => s.user);
@@ -10,12 +12,15 @@ function Home() {
   return <Navigate to={isBankRole(user.role) ? '/bank' : '/home'} replace />;
 }
 
+const C = (el: JSX.Element) => <ClientLayout>{el}</ClientLayout>;
+
 export function App() {
   return (
     <HashRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/home" element={C(<Dashboard />)} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <Toasts />
