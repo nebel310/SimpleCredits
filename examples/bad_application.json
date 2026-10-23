@@ -1,0 +1,41 @@
+{
+  "application_id": "demo-bad-001",
+  "application": {
+    "product_type": "PRODUCT_TYPE_MICROLOAN",
+    "requested_amount_rub": 5000000,
+    "term_months": 60,
+    "purpose": "FINANCING_PURPOSE_REFINANCING",
+    "segment": "BUSINESS_SEGMENT_MICRO"
+  },
+  "company": {
+    "inn": "7700000002",
+    "ogrn": "3257746000002",
+    "legal_name": "ИП Проблемный",
+    "legal_form": "LEGAL_FORM_INDIVIDUAL_ENTREPRENEUR",
+    "okved": "47.11",
+    "region": "Ростовская область",
+    "registration_date": "2025-10-01T00:00:00Z",
+    "employee_count": 2
+  },
+  "financials": {
+    "annual_revenue_rub": 1200000,
+    "annual_net_profit_rub": -100000,
+    "ebitda_rub": -50000,
+    "total_debt_rub": 2000000,
+    "monthly_revenue_rub": 100000,
+    "monthly_expenses_rub": 95000,
+    "accounts_receivable_rub": 20000,
+    "cash_balance_rub": 10000,
+    "period_end": "2025-12-31T00:00:00Z"
+  },
+  "credit_history": {
+    "active_obligations_count": 5,
+    "total_outstanding_rub": 1800000,
+    "monthly_debt_payments_rub": 80000,
+    "max_days_past_due_12m": 45,
+    "has_current_past_due": true,
+    "credit_utilization": 0.95,
+    "closed_obligations_count": 0,
+    "applications_last_6m": 5
+  }
+}

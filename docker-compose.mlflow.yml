@@ -1,0 +1,35 @@
+services:
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.17.2
+    container_name: simplecredits-mlflow
+    command:
+      - mlflow
+      - server
+      - --host
+      - 0.0.0.0
+      - --port
+      - "5000"
+      - --backend-store-uri
+      - sqlite:////mlflow/mlflow.db
+      - --serve-artifacts
+      - --artifacts-destination
+      - /mlflow/artifacts
+      - --default-artifact-root
+      - mlflow-artifacts:/
+      - --allowed-hosts
+      - localhost,127.0.0.1,localhost:*,127.0.0.1:*,mlflow,mlflow:*,simplecredits-mlflow,simplecredits-mlflow:*
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./.mlflow:/mlflow
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:5000/health')
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped

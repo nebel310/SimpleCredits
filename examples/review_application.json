@@ -1,0 +1,41 @@
+{
+  "application_id": "demo-review-001",
+  "application": {
+    "product_type": "PRODUCT_TYPE_TERM_LOAN",
+    "requested_amount_rub": 13000000,
+    "term_months": 36,
+    "purpose": "FINANCING_PURPOSE_WORKING_CAPITAL",
+    "segment": "BUSINESS_SEGMENT_SMALL"
+  },
+  "company": {
+    "inn": "7700000004",
+    "ogrn": "1187746000004",
+    "legal_name": "ООО Нагрузка",
+    "legal_form": "LEGAL_FORM_LLC",
+    "okved": "46.90",
+    "region": "Московская область",
+    "registration_date": "2019-06-15T00:00:00Z",
+    "employee_count": 12
+  },
+  "financials": {
+    "annual_revenue_rub": 20000000,
+    "annual_net_profit_rub": 2500000,
+    "ebitda_rub": 3500000,
+    "total_debt_rub": 3000000,
+    "monthly_revenue_rub": 1700000,
+    "monthly_expenses_rub": 1400000,
+    "accounts_receivable_rub": 900000,
+    "cash_balance_rub": 700000,
+    "period_end": "2025-12-31T00:00:00Z"
+  },
+  "credit_history": {
+    "active_obligations_count": 1,
+    "total_outstanding_rub": 1500000,
+    "monthly_debt_payments_rub": 1000000,
+    "max_days_past_due_12m": 0,
+    "has_current_past_due": false,
+    "credit_utilization": 0.3,
+    "closed_obligations_count": 4,
+    "applications_last_6m": 1
+  }
+}
