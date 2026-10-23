@@ -239,3 +239,22 @@ textarea.native { padding: 12px 14px; min-height: 96px; resize: vertical; }
 .sel-pop { position: absolute; z-index: 44; display: flex; gap: 4px; padding: 4px; background: var(--c-black); border-radius: 12px; box-shadow: 0 8px 20px rgba(0,0,0,.25); }
 .sel-pop button { border: 0; background: transparent; color: #fff; padding: 8px 10px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; }
 .sel-pop button:hover { background: #3f3f45; }
+
+/* ───── Пульт ───── */
+.src-card { background: #fff; border-radius: 20px; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+.src-card.bad { box-shadow: inset 0 0 0 2px var(--c-ai); }
+.src-card.off { opacity: .85; box-shadow: inset 0 0 0 2px var(--c-border); }
+
+@media (max-width: 720px) {
+  :root { --gutter: 16px; }
+  .hero { padding: 28px 24px; }
+  .banner .facts { grid-template-columns: 1fr; }
+  .mirror { grid-template-columns: 1fr; }
+  .ai-win { left: 8px; right: 8px; width: auto !important; }
+}
+.btn-lime { min-height: 40px; padding: 0 16px; border: 0; border-radius: 12px; background: var(--c-lime); color: var(--c-lime-ink); font-weight: 600; cursor: pointer; }
+.btn-lime:hover { background: #b5e21f; }
+
+.seg.seg-sm button { min-height: 30px; padding: 0 10px; font-size: 13px; }
+.steps li { min-width: 0; overflow-wrap: anywhere; }
+.mirror .steps li { font-size: 12px; }

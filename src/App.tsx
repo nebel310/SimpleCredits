@@ -1,7 +1,7 @@
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { isBankRole } from './api';
 import { useSession } from './lib/hooks';
-import { BankLayout, ClientLayout } from './layout/Layouts';
+import { BankLayout, ClientLayout, DemoLayout } from './layout/Layouts';
 import { Toasts } from './ui/kit';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/client/Dashboard';
@@ -15,6 +15,7 @@ import { Documents } from './pages/client/Documents';
 import { AllApplications, Queue } from './pages/bank/Queue';
 import { BankApplication } from './pages/bank/BankApplication';
 import { UwDecision } from './pages/bank/UwDecision';
+import { Simulator } from './pages/demo/Simulator';
 
 function Home() {
   const user = useSession((s) => s.user);
@@ -24,6 +25,7 @@ function Home() {
 
 const C = (el: JSX.Element) => <ClientLayout>{el}</ClientLayout>;
 const B = (el: JSX.Element) => <BankLayout>{el}</BankLayout>;
+const D = (el: JSX.Element) => <DemoLayout>{el}</DemoLayout>;
 
 export function App() {
   return (
@@ -45,6 +47,7 @@ export function App() {
         <Route path="/bank/all" element={B(<AllApplications />)} />
         <Route path="/bank/applications/:id" element={B(<BankApplication />)} />
         <Route path="/bank/applications/:id/decision" element={B(<UwDecision />)} />
+        <Route path="/demo/simulator" element={D(<Simulator />)} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <Toasts />
