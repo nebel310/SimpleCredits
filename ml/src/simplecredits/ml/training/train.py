@@ -36,7 +36,7 @@ from simplecredits.ml.scoring.policy import (
 
 MODEL_VERSION = "scorecard-linear-v1"
 DEFAULT_MODEL_PATH = Path("artifacts/model.joblib")
-LOGREG_C = 1.0
+LOGREG_C = 0.003
 LOGREG_MAX_ITER = 3000
 LOGREG_SOLVER = "lbfgs"
 DECISIONS = (

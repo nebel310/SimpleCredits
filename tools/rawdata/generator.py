@@ -1022,7 +1022,7 @@ def make_bki(company: Company, rng, counters: dict[str, int], tables: dict) -> N
             "report_id": report_id,
             "company_id": company.company_id,
             "bki_name": rng.choice(C.BKI_NAMES),
-            "report_date": iso_date(C.NOW - timedelta(days=rng.randint(1, 30))),
+            "report_date": iso_date(C.NOW - timedelta(days=30)),
             "credit_score": credit_score,
             "active_loans": len(active),
             "total_outstanding_rub": sum(loan["outstanding_rub"] for loan in active),
@@ -1035,6 +1035,32 @@ def make_bki(company: Company, rng, counters: dict[str, int], tables: dict) -> N
             "fraud_flag": int(company.risk > 0.55 and rng.random() < 0.03),
         }
     )
+    for quarter in range(1, 9):
+        report_date = C.NOW - timedelta(days=30 + quarter * 90)
+        snapshot = [
+            loan
+            for loan in loans
+            if loan["opened_at"] <= iso_date(report_date)
+            and (not loan["closed_at"] or loan["closed_at"] > iso_date(report_date))
+        ]
+        tables["credit_bureau_reports"].append(
+            {
+                "report_id": next_id(counters, "bki_report", "BKI", 6),
+                "company_id": company.company_id,
+                "bki_name": rng.choice(C.BKI_NAMES),
+                "report_date": iso_date(report_date),
+                "credit_score": int(clamp(credit_score + rng.gauss(0, 12), 300, 900)),
+                "active_loans": len(snapshot),
+                "total_outstanding_rub": sum(loan["outstanding_rub"] for loan in snapshot),
+                "monthly_payment_rub": sum(loan["monthly_payment_rub"] for loan in snapshot),
+                "max_days_past_due_12m": company.past_due_days,
+                "current_past_due": company.current_past_due,
+                "restructures_count": rng.randint(0, 2) if company.risk > 0.4 else 0,
+                "inquiries_6m": rng.randint(0, 6),
+                "applications_6m": rng.randint(0, 5),
+                "fraud_flag": int(company.risk > 0.55 and rng.random() < 0.03),
+            }
+        )
 
     for _ in range(rng.randint(0, 3)):
         tables["credit_inquiries"].append(
@@ -1999,7 +2025,7 @@ def application_reasons(company: Company, pd_value: float, requested_amount: flo
 
 
 def make_applications(
-    company: Company, rng, counters: dict[str, int], tables: dict
+    company: Company, rng, counters: dict[str, int], tables: dict, months: int
 ) -> None:
     if not company.users:
         return
@@ -2023,7 +2049,15 @@ def make_applications(
         requested_amount = max(100_000, min(requested_amount, 50_000_000))
         term_months = rng.choice([6, 12, 24, 36, 60])
         purpose = rng.choice(C.PURPOSES)
-        submitted_at = random_dt(rng, C.NOW - timedelta(days=120), C.NOW - timedelta(days=2))
+        application_start = max(
+            C.NOW - timedelta(days=months * 30),
+            company.registration_date + timedelta(days=90),
+        )
+        submitted_at = random_dt(
+            rng,
+            min(application_start, C.NOW - timedelta(days=32)),
+            C.NOW - timedelta(days=2),
+        )
         is_draft = rng.random() < 0.10
 
         pd_value = clamp(
@@ -2133,6 +2167,43 @@ def make_applications(
                 "rejection_reason": rejection_reason,
             }
         )
+
+        if (
+            status in {"approved", "offer_sent", "offer_accepted", "issued"}
+            and submitted_at <= C.NOW - timedelta(days=32)
+        ):
+            bureau_score = (
+                880.0
+                - company.risk * 450.0
+                - company.past_due_days * 1.2
+                + company.quality * 25.0
+            )
+            score_risk = clamp((780.0 - bureau_score) / 250.0, 0.0, 1.0)
+            default_probability = clamp(
+                0.02 + 0.45 * score_risk,
+                0.01,
+                0.45,
+            )
+            if rng.random() < default_probability:
+                event_at = submitted_at + timedelta(
+                    days=rng.randint(1, 30), hours=rng.randint(0, 23)
+                )
+                days_past_due = rng.randint(30, 180)
+                tables["loan_default_events"].append(
+                    {
+                        "event_id": next_id(counters, "default_event", "DFE", 7),
+                        "application_id": app_id,
+                        "company_id": company.company_id,
+                        "event_type": "default",
+                        "severity": "severe" if days_past_due >= 90 else "moderate",
+                        "event_at": iso_dt(event_at),
+                        "days_past_due": days_past_due,
+                        "amount_rub": int_rub(
+                            requested_amount * rng.uniform(0.25, 1.0)
+                        ),
+                        "source": "loan_servicing",
+                    }
+                )
 
         obligations = []
         if company.total_debt_rub > 0:
@@ -2409,7 +2480,7 @@ def generate_all(seed: int, n_companies: int, months: int = 12) -> tuple[dict[st
         make_alternative_data(company, rng, counters, tables, months)
         make_accounting(company, rng, counters, tables, months)
         make_market_data(company, rng, counters, tables, months)
-        make_applications(company, rng, counters, tables)
+        make_applications(company, rng, counters, tables, months)
         make_documents(company, rng, counters, tables, document_texts)
 
     return tables, document_texts
@@ -2484,6 +2555,7 @@ def validate(tables: dict[str, list[dict]]) -> list[str]:
         "self_assessments",
         "collateral_offers",
         "applications",
+        "loan_default_events",
         "documents",
         "audit_log",
     ]
@@ -2528,6 +2600,7 @@ def validate(tables: dict[str, list[dict]]) -> list[str]:
         "offers",
         "self_assessments",
         "collateral_offers",
+        "loan_default_events",
     ]:
         for row in tables[table]:
             if row["application_id"] not in application_ids:

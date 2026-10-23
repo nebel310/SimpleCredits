@@ -103,6 +103,26 @@ python -m simplecredits.ml.training.train --data data\applications.csv --run-nam
 
 Сгенерированный датасет сохраняется в `ml/data/<digest>.csv` и логируется как артефакт. При `--data` используется указанный файл.
 
+Для CatBoost используется отдельная команда с теми же флагами:
+
+```powershell
+python -m simplecredits.ml.training.catboost --samples 20000 --run-name catboost
+```
+
+или console script:
+
+```powershell
+simplecredits-catboost --samples 20000 --run-name catboost
+```
+
+CatBoost-модель сохраняется в путь `--out` (по умолчанию `artifacts/catboost_model.joblib` относительно текущей папки), логируется в MLflow с тегом `model_type=catboost` и может быть загружена как pyfunc. Для сравнения запускайте обе модели с одинаковыми `--samples`, `--seed` и `--test-size`: `simplecredits-compare` покажет `model_type` рядом с метриками.
+
+Дополнительно можно переопределить гиперпараметры CatBoost:
+
+```powershell
+python -m simplecredits.ml.training.catboost --samples 20000 --run-name catboost-tuned --iterations 400 --depth 4 --learning-rate 0.04 --l2-leaf-reg 3
+```
+
 ## 4. Регистрация модели и alias
 
 Регистрация доступна только при HTTP tracking URI:
@@ -155,13 +175,13 @@ simplecredits-compare --metric roc_auc_test --limit 10
 - `--json` — вывести JSON вместо таблицы;
 - `--tracking-uri` — URI сервера или локального хранилища.
 
-Таблица содержит `run_id`, `run_name`, `status`, выбранную метрику, ROC-AUC, Brier, approval rate, approved default rate, seed, число объектов и версию модели.
+Таблица содержит `run_id`, `run_name`, `status`, выбранную метрику, ROC-AUC, Brier, approval rate, approved default rate, seed, число объектов, тип и версию модели.
 
 ## 6. Что сохраняется в запуске
 
 Параметры и теги:
 
-- версия и тип модели, seed, размеры выборок, default rate, гиперпараметры LogReg;
+- версия и тип модели, seed, размеры выборок, default rate, гиперпараметры LogReg или CatBoost;
 - версии Python, pandas, scikit-learn, MLflow;
 - git commit, digest датасета, tracking schema version.
 
@@ -177,7 +197,7 @@ simplecredits-compare --metric roc_auc_test --limit 10
 Артефакты:
 
 - `data/` — датасет;
-- `model_weights/model.joblib` — веса;
+- `model_weights/<model>.joblib` — веса выбранной модели;
 - `evaluation/train_predictions.csv`;
 - `evaluation/test_predictions.csv`;
 - `evaluation/split.csv`;
@@ -236,6 +256,7 @@ python -m compileall -q ml/src ml/tests
 - file store: логирование run, метрик, датасета, артефактов, pyfunc-модели и загрузка модели;
 - HTTP-сервер MLflow 3.17.2: логирование, регистрация версии, alias `champion`, загрузка модели из registry и предсказание;
 - сравнение запусков через CLI по file store и HTTP;
+- CatBoost: обучение, MLflow run, pyfunc-модель, загрузка и scoring, сравнение с baseline;
 - Docker-контейнер из `docker-compose.mlflow.yml`: health, обучение, регистрация версии, alias `champion`, загрузка модели из registry, предсказание и сравнение запусков. Артефакты сохраняются в `./.mlflow/`.
 
 ## 9. Типичные проблемы

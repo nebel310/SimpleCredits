@@ -275,6 +275,7 @@ def log_training_run(
             _flatten_params(
                 {
                     **params,
+                    "model_type": artifact.get("model_type", "unknown"),
                     "dataset_digest": dataset.digest,
                     "dataset_source": dataset_source,
                     "n_features": len(artifact["feature_columns"]),
@@ -289,6 +290,7 @@ def log_training_run(
             {
                 "git_commit": _git_commit(),
                 "model_version": artifact["model_version"],
+                "model_type": artifact.get("model_type", "unknown"),
                 "dataset_digest": dataset.digest,
                 "dataset_source": dataset_source,
                 "tracking_schema_version": "v1",
@@ -327,6 +329,11 @@ def log_training_run(
                 "scipy==1.18.1",
                 "scikit-learn==1.9.1",
                 "joblib==1.6.0",
+                *(
+                    ["catboost==1.2.10"]
+                    if artifact.get("model_type") == "catboost"
+                    else []
+                ),
             ],
         )
 

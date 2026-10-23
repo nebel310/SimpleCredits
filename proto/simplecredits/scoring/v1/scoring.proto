@@ -18,6 +18,8 @@ message ScoreApplicationRequest {
   Company company = 3;
   Financials financials = 4;
   CreditHistory credit_history = 5;
+  map<string, double> extra_numeric_features = 6;
+  map<string, string> extra_categorical_features = 7;
 }
 
 message ScoreApplicationResponse {

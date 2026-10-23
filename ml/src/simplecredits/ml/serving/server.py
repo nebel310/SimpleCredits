@@ -11,6 +11,7 @@ import grpc
 from google.protobuf.timestamp_pb2 import Timestamp
 from grpc_health.v1 import health, health_pb2, health_pb2_grpc
 
+from simplecredits.ml.data.schema import CATEGORICAL_FEATURES, RAW_NUMERIC_FEATURES
 from simplecredits.ml.scoring.model import CreditScorer, ScoreResult
 from simplecredits.ml.training.train import DEFAULT_MODEL_PATH, save_model, train_model
 from simplecredits.scoring.v1 import scoring_pb2, scoring_pb2_grpc
@@ -109,7 +110,7 @@ def request_to_raw_row(request: scoring_pb2.ScoreApplicationRequest) -> dict:
         age_seconds = time.time() - company.registration_date.ToSeconds()
         age_months = max(0, int(age_seconds // (30 * 24 * 3600)))
 
-    return {
+    row = {
         "company_age_months": age_months,
         "employee_count": company.employee_count or None,
         "okved_risk": estimate_okved_risk(company.okved),
@@ -135,6 +136,20 @@ def request_to_raw_row(request: scoring_pb2.ScoreApplicationRequest) -> dict:
         "product_type": PRODUCT_TYPES.get(application.product_type, "term_loan"),
         "purpose": PURPOSES.get(application.purpose, "other"),
     }
+
+    unknown_numeric = sorted(
+        set(request.extra_numeric_features) - set(RAW_NUMERIC_FEATURES)
+    )
+    if unknown_numeric:
+        raise ValueError(f"unknown numeric features: {unknown_numeric}")
+    unknown_categorical = sorted(
+        set(request.extra_categorical_features) - set(CATEGORICAL_FEATURES)
+    )
+    if unknown_categorical:
+        raise ValueError(f"unknown categorical features: {unknown_categorical}")
+    row.update(request.extra_numeric_features)
+    row.update(request.extra_categorical_features)
+    return row
 
 
 def to_response(application_id: str, result: ScoreResult) -> scoring_pb2.ScoreApplicationResponse:
