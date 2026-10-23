@@ -1,0 +1,54 @@
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; min-height: 100%; }
+body {
+  background: var(--c-bg);
+  color: var(--c-text);
+  font-family: var(--f-text);
+  font-size: 16px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--c-text); text-underline-offset: 3px; }
+a:hover { color: var(--c-ai); }
+button { font: inherit; }
+h1, h2, h3 { margin: 0; font-family: var(--f-display); font-weight: 600; line-height: 1.15; }
+.h1 { font-size: 32px; }
+.h2 { font-size: 22px; }
+.h3 { font-size: 18px; }
+.display { font-family: var(--f-display); font-weight: 700; font-size: 52px; line-height: 1; }
+.num { font-family: var(--f-display); font-weight: 700; }
+.muted { color: var(--c-text-2); }
+.small { font-size: 14px; }
+.xs { font-size: 13px; }
+.caps { font-size: 12px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
+.nowrap { white-space: nowrap; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ───── Каркас ───── */
+.wrap { max-width: var(--wrap); margin: 0 auto; padding: 0 var(--gutter); }
+.page-main { padding-top: 28px; padding-bottom: 96px; display: flex; flex-direction: column; gap: 20px; }
+.row { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+.row-c { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.between { justify-content: space-between; }
+.stack { display: flex; flex-direction: column; gap: 16px; }
+.stack-s { display: flex; flex-direction: column; gap: 8px; }
+.stack-l { display: flex; flex-direction: column; gap: 24px; }
+.grow { flex: 999 1 560px; min-width: 0; }
+.side { flex: 1 1 320px; min-width: 0; }
+.grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr)); gap: 20px; align-items: start; }
+.grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 20px; align-items: stretch; }
+.grid-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 16px; align-items: start; }
+
+/* ───── Карточки ───── */
+.card { background: var(--c-white); border-radius: var(--r-card); padding: 28px; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.card.tight { padding: 22px; gap: 12px; }
+.card.big { padding: 32px; gap: 24px; }
+.hero { background: var(--c-red); color: #fff; border-radius: var(--r-hero); padding: 36px 44px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 24px 48px; }
+.hero.dark { background: var(--c-black); }
+.hero p { margin: 10px 0 0; max-width: 720px; }
+.hero a { color: #fff; }
+.panel { background: var(--c-bg); border-radius: var(--r-panel); padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+.panel.row-panel { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 16px; }
+.red-card { background: var(--c-red); color: #fff; }
+.red-card .muted { color: #fff; }
+.red-card .dl > div { border-color: var(--c-black); }
