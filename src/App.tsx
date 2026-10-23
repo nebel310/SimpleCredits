@@ -8,6 +8,7 @@ import { Dashboard } from './pages/client/Dashboard';
 import { Wizard } from './pages/client/Wizard';
 import { ApplicationCard, ApplicationsList } from './pages/client/Applications';
 import { DocsRequest } from './pages/client/DocsRequest';
+import { Decision } from './pages/client/Decision';
 
 function Home() {
   const user = useSession((s) => s.user);
@@ -29,6 +30,7 @@ export function App() {
         <Route path="/applications" element={C(<ApplicationsList />)} />
         <Route path="/applications/:id" element={C(<ApplicationCard />)} />
         <Route path="/applications/:id/documents" element={C(<DocsRequest />)} />
+        <Route path="/applications/:id/decision" element={C(<Decision />)} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <Toasts />
