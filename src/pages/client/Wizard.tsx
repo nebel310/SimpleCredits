@@ -4,8 +4,9 @@ import { api, ApiError, type ApplicationView, type BusinessGoal, type ChancesRes
 import { GOALS, PRODUCTS, productByCode } from '../../api/catalog';
 import { useAction, useQuery, useSession } from '../../lib/hooks';
 import { date, dateTime, money, pct, time } from '../../lib/format';
+import { ROLE_NAME } from '../../lib/status';
 import { monthlyLoad, overdraftCost, termOptions } from '../../lib/calc';
-import { AiHint, Btn, Chip, ErrorState, FileBox, FileDrop, Loading, MoneyField, PageTitle, RadioGroup, RoleGuard, SelectField, SourceTag, TextField, Tracker, toast } from '../../ui/kit';
+import { AiHint, Btn, Chip, ErrorState, FileBox, FileDrop, Loading, MoneyField, PageTitle, RadioGroup, RoleGuard, SelectField, SourceTag, TextField, Tracker, toast, Check } from '../../ui/kit';
 import { Px } from '../../ui/Px';
 import { useAiScreen } from '../../ai/AiAssistant';
 import { COMPANY_SHORT } from '../../lib/companies';
@@ -84,6 +85,7 @@ export function Wizard() {
       {step === 'goal' && <GoalStep app={app} setApp={setApp} chances={chances.data} />}
       {step === 'company' && <CompanyStep app={app} setApp={setApp} />}
       {step === 'finance' && <FinanceStep app={app} setApp={setApp} />}
+      {step === 'review' && <ReviewStep app={app} setApp={setApp} />}
       <p className="xs muted" style={{ margin: 0 }}>
         Прототип для Альфа-Хак 2026 · данные синтетические
       </p>
@@ -778,5 +780,145 @@ function FinanceStep({ app, setApp }: StepProps) {
         </>
       }
     />
+  );
+}
+
+// ───────── Шаг 4: подтверждение ─────────
+
+function ReviewStep({ app, setApp }: StepProps) {
+  const { session, user } = useSession();
+  const nav = useNavigate();
+  const [bki, setBki] = useState(!!app.consents.bki);
+  const [pd, setPd] = useState(!!app.consents.pd);
+  const f = app.finance;
+  const p = productByCode(app.product);
+
+  useAiScreen('Новая заявка: подтверждение', { appId: app.id, chips: ['Зачем согласие на БКИ?', 'Что будет после отправки?'] });
+
+  const gaps: string[] = [];
+  if (!app.companyConfirmed) gaps.push('Компания не подтверждена — шаг 2');
+  if (f.hasLoans === null) gaps.push('Не указано, есть ли кредиты — шаг 3');
+  if (f.hasLoans && !f.loanPayments) gaps.push('Не указан платёж по кредитам — шаг 3');
+  if (f.revenueYear.value === null && f.statement?.status !== 'confirmed') gaps.push('Нужна подтверждённая выписка — шаг 3');
+  const needConsents = !app.consents.bki || !app.consents.pd;
+
+  const consents = useAction(async () => {
+    const v = await api.giveConsents(session!, app.id);
+    setApp(v);
+  });
+  const submit = useAction(async (key) => {
+    const v = await api.submitApplication(session!, app.id, key);
+    setApp(v);
+    toast('Заявка отправлена');
+    nav(`/applications/${v.id}`, { replace: true });
+  });
+
+  const canSubmit = user!.role === 'owner';
+  const blockReason = !canSubmit ? 'Отправить заявку может владелец' : gaps.length ? 'Заполните пропуски выше' : needConsents ? 'Нужны согласия' : null;
+
+  return (
+    <Layout
+      main={
+        <>
+          <h2 className="h2">Проверьте и отправьте</h2>
+          <Section title="Цель и параметры" edit="/apply/goal">
+            {GOALS.find((g) => g.id === app.goal)?.title} · {p.name} · {money(app.amount)} · {app.termMonths} мес
+          </Section>
+          <Section title="Компания" edit="/apply/company">
+            {COMPANY_SHORT[app.companyId]} · {app.companyConfirmed === 'registry' ? 'подтверждено по реестру' : app.companyConfirmed === 'manual' ? 'уточнено вручную' : <b style={{ color: 'var(--c-negative-ink)' }}>не подтверждено</b>}
+          </Section>
+          <Section title="Финансы" edit="/apply/finance">
+            Выручка {money(f.revenueYear.value)} · поступления {money(f.inflows3m.value)}/мес · кредиты: {f.hasLoans === null ? <b style={{ color: 'var(--c-negative-ink)' }}>не указано</b> : f.hasLoans ? `да, ${money(f.loanPayments)}/мес` : 'нет'} · поручитель: {f.guarantor === 'none' ? 'нет' : f.guarantor === 'owner' ? 'владелец' : f.guarantorName}
+            {f.statement && ` · выписка: ${f.statement.status === 'confirmed' ? 'подтверждена' : 'не подтверждена'}`}
+          </Section>
+
+          {gaps.length > 0 && (
+            <div className="err-box" style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
+              <span>Не хватает данных:</span>
+              <ul style={{ margin: 0, paddingLeft: 20, fontWeight: 400 }}>
+                {gaps.map((g) => (
+                  <li key={g}>{g}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div className="panel">
+            <b>Согласия</b>
+            {app.consents.bki ? (
+              <div className="row-c small">
+                <Px name="check" size={14} color="var(--c-high)" /> Согласие на запрос в БКИ дано {dateTime(app.consents.bki.at)} · {app.consents.bki.by}
+              </div>
+            ) : (
+              <Check checked={bki} onChange={setBki} disabled={!canSubmit} label="Согласен на запрос в бюро кредитных историй (218-ФЗ)" hint="Без него банк не может проверить кредитную историю" />
+            )}
+            {app.consents.pd ? (
+              <div className="row-c small">
+                <Px name="check" size={14} color="var(--c-high)" /> Согласие на обработку персональных данных дано {dateTime(app.consents.pd.at)} · {app.consents.pd.by}
+              </div>
+            ) : (
+              <Check checked={pd} onChange={setPd} disabled={!canSubmit} label="Согласен на обработку персональных данных (152-ФЗ)" />
+            )}
+            {needConsents && canSubmit && (
+              <div>
+                <Btn view="primary" size={40} disabled={!(bki || app.consents.bki) || !(pd || app.consents.pd)} loading={consents.pending} onClick={() => consents.run()}>
+                  Сохранить согласия
+                </Btn>
+              </div>
+            )}
+            {!canSubmit && needConsents && <span className="small muted">Согласия даёт владелец.</span>}
+          </div>
+
+          <div className="panel">
+            <b>Что будет после отправки</b>
+            <ol style={{ margin: 0, paddingLeft: 20 }} className="small">
+              <li>Начнём проверку данных: реестр, налоги, кредитная история, суды.</li>
+              <li>Посчитаем оценку по правилам. Иногда банк просит документ или проверяет заявку вручную — это не отказ.</li>
+              <li>Статус появится в кабинете. Писем и SMS не будет.</li>
+            </ol>
+          </div>
+
+          <div className="small">
+            Отправляет: <b>{user!.name}</b>, {ROLE_NAME[user!.role].toLowerCase()} · {COMPANY_SHORT[app.companyId]}
+          </div>
+          {!canSubmit && (
+            <RoleGuard allowed={false} role={user!.role} what="Отправить заявку">
+              {null}
+            </RoleGuard>
+          )}
+          {submit.error && <ErrorState error={submit.error} onRetry={() => submit.run()} saved />}
+          <div className="btn-row">
+            <Btn view="accent" onClick={() => submit.run()} loading={submit.pending} disabled={!!blockReason}>
+              {submit.pending ? 'Отправляем…' : 'Отправить заявку'}
+            </Btn>
+            <Btn view="outlined" to="/apply/finance">
+              Назад
+            </Btn>
+            {blockReason && <span className="xs muted">{blockReason}</span>}
+          </div>
+        </>
+      }
+      side={
+        <>
+          <Summary app={app} extra={<div><dt style={{ color: '#fff' }}>Подписывает</dt><dd>Владелец</dd></div>} />
+          <AiHint>Согласие на запрос в бюро нужно по закону: без него банк не может посмотреть кредитную историю. Если что-то непонятно — выделите текст и спросите меня.</AiHint>
+        </>
+      }
+    />
+  );
+}
+
+function Section({ title, edit, children }: { title: string; edit: string; children: ReactNode }) {
+  const nav = useNavigate();
+  return (
+    <div className="row-c between" style={{ padding: '14px 0', borderTop: '1px solid var(--c-line)', flexWrap: 'nowrap', alignItems: 'flex-start' }}>
+      <div style={{ minWidth: 0 }}>
+        <div className="xs muted">{title}</div>
+        <div>{children}</div>
+      </div>
+      <button type="button" className="linkbtn" onClick={() => nav(edit)}>
+        Изменить
+      </button>
+    </div>
   );
 }
