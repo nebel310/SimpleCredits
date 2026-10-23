@@ -28,3 +28,4 @@ data/raw/json/
 Thumbs.db
 .idea/
 .vscode/
+.env
