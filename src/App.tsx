@@ -5,6 +5,7 @@ import { ClientLayout } from './layout/Layouts';
 import { Toasts } from './ui/kit';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/client/Dashboard';
+import { Wizard } from './pages/client/Wizard';
 
 function Home() {
   const user = useSession((s) => s.user);
@@ -21,6 +22,8 @@ export function App() {
         <Route path="/" element={<Home />} />
         <Route path="/login" element={<Login />} />
         <Route path="/home" element={C(<Dashboard />)} />
+        <Route path="/apply" element={<Navigate to="/apply/goal" replace />} />
+        <Route path="/apply/:step" element={C(<Wizard />)} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <Toasts />
