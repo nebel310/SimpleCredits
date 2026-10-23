@@ -126,6 +126,7 @@ export function AiAssistant() {
 
   return (
     <>
+      <SelectionAsk />
       {!s.open && (
         <>
           {s.tip && !s.tipHidden && (
@@ -237,5 +238,57 @@ export function AiAssistant() {
         </section>
       )}
     </>
+  );
+}
+
+/** Режим 1: выделить текст на странице → «Спросить ИИ» */
+function SelectionAsk() {
+  const [pos, setPos] = useState<{ x: number; y: number; text: string } | null>(null);
+  useEffect(() => {
+    const onUp = (e: MouseEvent) => {
+      const t = e.target as HTMLElement;
+      if (t.closest('.ai-win') || t.closest('.sel-pop')) return;
+      setTimeout(() => {
+        const sel = window.getSelection();
+        const text = sel?.toString().trim() ?? '';
+        if (!sel || sel.rangeCount === 0 || text.length < 2 || text.length > 300) {
+          setPos(null);
+          return;
+        }
+        const main = document.getElementById('main');
+        if (!main || !main.contains(sel.anchorNode)) {
+          setPos(null);
+          return;
+        }
+        const r = sel.getRangeAt(0).getBoundingClientRect();
+        setPos({ x: r.left + window.scrollX, y: r.bottom + window.scrollY + 8, text });
+      }, 10);
+    };
+    const onDown = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement).closest('.sel-pop')) setPos(null);
+    };
+    document.addEventListener('mouseup', onUp);
+    document.addEventListener('mousedown', onDown);
+    return () => {
+      document.removeEventListener('mouseup', onUp);
+      document.removeEventListener('mousedown', onDown);
+    };
+  }, []);
+  if (!pos) return null;
+  const go = (q: string) => {
+    const text = pos.text;
+    setPos(null);
+    window.getSelection()?.removeAllRanges();
+    askAi(q, text);
+  };
+  return (
+    <div className="sel-pop" style={{ left: pos.x, top: pos.y }} role="toolbar" aria-label="Спросить ИИ о выделенном">
+      <button type="button" onClick={() => go('Что это значит?')}>
+        <Px name="gem" size={12} color="var(--c-lime)" /> Спросить ИИ
+      </button>
+      <button type="button" onClick={() => go('Объясни проще')}>
+        Объяснить проще
+      </button>
+    </div>
   );
 }
