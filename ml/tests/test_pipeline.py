@@ -119,6 +119,19 @@ def raw_db(tmp_path: Path) -> Path:
                 "accounts_receivable_rub": 1_500_000,
                 "debt_rub": 5_000_000,
             },
+            {
+                "statement_id": "FS0003",
+                "company_id": "C0001",
+                "year": 2026,
+                "period": "H1",
+                "revenue_rub": 99_000_000,
+                "operating_expenses_rub": 80_000_000,
+                "ebitda_rub": 15_000_000,
+                "net_profit_rub": 10_000_000,
+                "cash_rub": 5_000_000,
+                "accounts_receivable_rub": 4_000_000,
+                "debt_rub": 9_000_000,
+            },
         ]
     )
     bank_products = pd.DataFrame(
@@ -167,6 +180,15 @@ def raw_db(tmp_path: Path) -> Path:
                 "direction": "in",
                 "amount_rub": 10_000,
                 "balance_after_rub": 20_000,
+            },
+            {
+                "transaction_id": "TX0004",
+                "account_id": "ACC1",
+                "company_id": "C0001",
+                "transaction_date": "2026-01-01T10:00:00Z",
+                "direction": "in",
+                "amount_rub": 999_999,
+                "balance_after_rub": 2_000_000,
             },
         ]
     )
@@ -333,12 +355,31 @@ def test_build_training_table_produces_features_and_labels(raw_db):
     assert row["txn_inflow_90d"] == 100_000
     assert row["txn_outflow_90d"] == 50_000
     assert row["txn_net_90d"] == 50_000
+    assert row["txn_count_90d"] == 2
     assert row["txn_balance_latest"] == 150_000
     assert row["default"] == 0
 
     defaulted = frame.loc[frame["application_id"] == "A0002"].iloc[0]
     assert defaulted["default"] == 1
     assert defaulted["label_event"] == "future_bankruptcy"
+
+
+def test_historical_default_label_respects_horizon(raw_db):
+    tables = load_raw_tables(raw_db)
+    history = tables["bank_internal_history"]
+    mask = history["company_id"] == "C0001"
+    history.loc[mask, "defaults_count"] = 1
+    history.loc[mask, "last_activity_at"] = pd.Timestamp("2026-01-20T12:00:00Z")
+
+    short_frame, _ = build_training_table(tables, horizon_days=10)
+    short_row = short_frame.loc[short_frame["application_id"] == "A0001"].iloc[0]
+    assert short_row["default"] == 0
+    assert short_row["label_event"] == "no_default"
+
+    full_frame, _ = build_training_table(tables, horizon_days=30)
+    full_row = full_frame.loc[full_frame["application_id"] == "A0001"].iloc[0]
+    assert full_row["default"] == 1
+    assert full_row["label_event"] == "historical_defaults"
 
 
 def test_run_pipeline_writes_csv_and_manifest(raw_db, tmp_path):
@@ -348,7 +389,8 @@ def test_run_pipeline_writes_csv_and_manifest(raw_db, tmp_path):
     assert output.exists()
     assert output.with_suffix(".manifest.json").exists()
     assert len(frame) == 2
-    assert report.pipeline_version == "raw-as-of-v1"
+    assert report.pipeline_version == "raw-as-of-v2"
     assert report.output_path == str(output.resolve())
     assert report.db_sha256
     assert report.observation_horizon_days == 90
+    assert report.label_event_counts == {"future_bankruptcy": 1, "no_default": 1}

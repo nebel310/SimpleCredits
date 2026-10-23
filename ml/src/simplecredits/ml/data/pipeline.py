@@ -14,10 +14,11 @@ import pandas as pd
 
 from simplecredits.ml.data.schema import TARGET_COLUMN
 
-PIPELINE_VERSION = "raw-as-of-v1"
+PIPELINE_VERSION = "raw-as-of-v2"
 DEFAULT_DB_PATH = Path("data/raw/simplecredits_raw.db")
 DEFAULT_OUTPUT_PATH = Path("ml/data/training_table.csv")
-DEFAULT_HORIZON_DAYS = 180
+DEFAULT_HORIZON_DAYS = 30
+STATEMENT_PUBLICATION_LAG_DAYS = 90
 
 RAW_TABLES: tuple[str, ...] = (
     "applications",
@@ -122,6 +123,11 @@ REGION_RISK = {
     "\u0440\u0435\u0441\u043f\u0443\u0431\u043b\u0438\u043a\u0430 \u0431\u0430\u0448\u043a\u043e\u0440\u0442\u043e\u0441\u0442\u0430\u043d": 0.32,
 }
 
+STATEMENT_PERIOD_END_MONTH_DAY = {
+    "H1": (6, 30),
+    "FY": (12, 31),
+}
+
 OKVED_RISK = {
     "01": 0.55,
     "02": 0.60,
@@ -162,6 +168,7 @@ class PipelineReport:
     default_rate: float
     observation_horizon_days: int
     dataset_cutoff: str
+    label_event_counts: dict[str, int]
     table_counts: dict[str, int]
 
     def as_dict(self) -> dict:
@@ -220,7 +227,7 @@ def _as_of_rows(frame: pd.DataFrame, date_column: str, as_of: pd.Timestamp) -> p
     if frame.empty or date_column not in frame.columns:
         return frame.iloc[0:0]
     dates = pd.to_datetime(frame[date_column], errors="coerce", utc=True)
-    return frame.loc[dates.notna() & (dates <= as_of)].copy()
+    return frame.loc[dates.notna() & (dates < as_of)].copy()
 
 
 def _window_rows(frame: pd.DataFrame, date_column: str, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
@@ -240,21 +247,28 @@ def _latest(frame: pd.DataFrame, date_column: str) -> pd.DataFrame:
     return valid.loc[[dates.loc[valid.index].idxmax()]]
 
 
+def _statement_available_at(row: pd.Series) -> pd.Timestamp:
+    year = pd.to_numeric(row.get("year"), errors="coerce")
+    period = str(row.get("period", "")).strip().upper()
+    month_day = STATEMENT_PERIOD_END_MONTH_DAY.get(period)
+    if pd.isna(year) or month_day is None:
+        return pd.NaT
+    month, day = month_day
+    period_end = pd.Timestamp(year=int(year), month=month, day=day, tz="UTC")
+    return period_end + pd.Timedelta(days=STATEMENT_PUBLICATION_LAG_DAYS)
+
+
 def _latest_statement(frame: pd.DataFrame, as_of: pd.Timestamp) -> pd.DataFrame:
-    if frame.empty or "year" not in frame.columns:
+    if frame.empty or "year" not in frame.columns or "period" not in frame.columns:
         return frame.iloc[0:0]
-    years = pd.to_numeric(frame["year"], errors="coerce")
-    valid = frame.loc[years.notna() & (years <= as_of.year)].copy()
+    valid = frame.copy()
+    valid["_available_at"] = valid.apply(_statement_available_at, axis=1)
+    valid["_year"] = pd.to_numeric(valid["year"], errors="coerce")
+    valid = valid.loc[valid["_available_at"].notna() & (valid["_available_at"] < as_of)]
     if valid.empty:
         return valid
-    valid["_year"] = pd.to_numeric(valid["year"], errors="coerce")
-    valid = valid.sort_values(["_year"], ascending=False)
-    latest_year = int(valid["_year"].iloc[0])
-    same_year = valid.loc[valid["_year"] == latest_year]
-    if "period" in same_year.columns:
-        same_year = same_year.assign(_period=same_year["period"].astype(str))
-        same_year = same_year.sort_values("_period", ascending=False)
-    return same_year.iloc[[0]].drop(columns=["_year"], errors="ignore")
+    valid = valid.sort_values(["_available_at", "_year"], ascending=False)
+    return valid.iloc[[0]].drop(columns=["_available_at", "_year"], errors="ignore")
 
 
 def _first_numeric(frame: pd.DataFrame, column: str, default: float = 0.0) -> float:
@@ -540,8 +554,10 @@ def _label_for_application(
         if not last_activity.empty:
             internal_event_at = pd.Timestamp(last_activity.iloc[0]["last_activity_at"])
 
-    if historical_defaults > 0:
-        return 1, "historical_defaults", internal_event_at
+    if historical_defaults > 0 and internal_event_at is not None:
+        event_at = pd.Timestamp(internal_event_at)
+        if submitted_at < event_at <= horizon_end:
+            return 1, "historical_defaults", event_at
     if matured:
         return 0, "no_default", None
     return None, "censored", None
@@ -565,6 +581,33 @@ def _required_tables_present(tables: dict[str, pd.DataFrame]) -> None:
     missing = [table for table in RAW_TABLES if table not in tables]
     if missing:
         raise ValueError(f"missing raw tables: {missing}")
+
+
+def _validate_training_frame(frame: pd.DataFrame) -> None:
+    if frame["application_id"].isna().any() or frame["application_id"].duplicated().any():
+        raise ValueError("training table must contain unique non-null application_id values")
+    if not frame[TARGET_COLUMN].isin((0, 1)).all():
+        raise ValueError("target must contain only binary labels")
+    if not frame["label_event"].isin(
+        {"future_bankruptcy", "historical_defaults", "no_default"}
+    ).all():
+        raise ValueError("unsupported label_event values")
+
+    submitted_at = pd.to_datetime(frame["submitted_at"], errors="coerce", utc=True)
+    horizon_end = pd.to_datetime(frame["label_horizon_end"], errors="coerce", utc=True)
+    if submitted_at.isna().any() or horizon_end.isna().any():
+        raise ValueError("submitted_at and label_horizon_end must be valid timestamps")
+    if not (horizon_end > submitted_at).all():
+        raise ValueError("label_horizon_end must be after submitted_at")
+
+    numeric = frame[RAW_NUMERIC_FEATURES + EXTRA_NUMERIC_FEATURES].to_numpy(dtype=float)
+    if not np.isfinite(numeric).all():
+        raise ValueError("numeric features must be finite")
+
+    positive = frame[TARGET_COLUMN] == 1
+    event_at = pd.to_datetime(frame.loc[positive, "label_event_at"], errors="coerce", utc=True)
+    if event_at.isna().any() or not (event_at > submitted_at.loc[positive]).all():
+        raise ValueError("positive labels must have an event after submitted_at")
 
 
 def build_training_table(
@@ -632,9 +675,14 @@ def build_training_table(
     frame = pd.DataFrame(rows)
     frame[TARGET_COLUMN] = pd.to_numeric(frame[TARGET_COLUMN], errors="raise").astype(int)
     frame = frame.reindex(columns=TRAINING_COLUMNS)
+    _validate_training_frame(frame)
 
     positives = int(frame[TARGET_COLUMN].sum())
     negatives = int(len(frame) - positives)
+    label_event_counts = {
+        str(event): int(count)
+        for event, count in frame["label_event"].value_counts().sort_index().items()
+    }
     generated_at = datetime.now(timezone.utc).isoformat()
     report = PipelineReport(
         pipeline_version=PIPELINE_VERSION,
@@ -651,6 +699,7 @@ def build_training_table(
         default_rate=float(frame[TARGET_COLUMN].mean()),
         observation_horizon_days=int(horizon_days),
         dataset_cutoff=dataset_cutoff.isoformat(),
+        label_event_counts=label_event_counts,
         table_counts={table: int(len(tables[table])) for table in RAW_TABLES},
     )
     return frame, report
@@ -700,6 +749,7 @@ def run_pipeline(
         default_rate=report.default_rate,
         observation_horizon_days=report.observation_horizon_days,
         dataset_cutoff=report.dataset_cutoff,
+        label_event_counts=report.label_event_counts,
         table_counts=report.table_counts,
     )
     manifest_path = output.with_suffix(".manifest.json")
