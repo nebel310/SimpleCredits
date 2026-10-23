@@ -6,7 +6,9 @@ import { Select } from '@alfalab/core-components-select';
 import { Checkbox as AlfaCheckbox } from '@alfalab/core-components-checkbox';
 import { Radio as AlfaRadio } from '@alfalab/core-components-radio';
 import { Switch as AlfaSwitch } from '@alfalab/core-components-switch';
-import type { ApiError } from '../api';
+import type { ApiError, ChanceLevel, DataOrigin, DocStatus } from '../api';
+import { Px, type PxName } from './Px';
+import { TRACK, type BannerKind } from '../lib/status';
 
 // ───── Кнопки (core-components Button) ─────
 
@@ -181,5 +183,98 @@ export function Field({ label, children, hint, error }: { label: string; childre
       {children}
       {error ? <span className="err">{error}</span> : hint ? <span className="hint">{hint}</span> : null}
     </div>
+  );
+}
+
+// ───── Метки и показатели ─────
+
+export function Chip({ kind = 'neutral', children }: { kind?: 'high' | 'mid' | 'low' | 'neutral' | 'dark' | 'lime' | 'ai' | 'attention'; children: ReactNode }) {
+  return <span className={`chip ${kind}`}>{children}</span>;
+}
+
+export const LEVEL: Record<ChanceLevel, { label: string; fill: string; chip: 'high' | 'mid' | 'low' | 'neutral'; icon: PxName }> = {
+  high: { label: 'Высокий шанс', fill: 'var(--c-high)', chip: 'high', icon: 'check' },
+  mid: { label: 'Средний шанс', fill: 'var(--c-mid)', chip: 'mid', icon: 'up' },
+  low: { label: 'Низкий шанс', fill: 'var(--c-negative)', chip: 'low', icon: 'alert' },
+  blocked: { label: 'Сейчас недоступно', fill: 'var(--c-negative)', chip: 'low', icon: 'alert' },
+  unknown: { label: 'Не рассчитано', fill: 'var(--c-gray)', chip: 'neutral', icon: 'wait' },
+};
+
+export function Meter({ value, color }: { value: number | null; color: string }) {
+  const on = value === null ? 0 : Math.round(value / 10);
+  return (
+    <div className="meter" aria-hidden="true">
+      {Array.from({ length: 10 }, (_, i) => (
+        <span key={i} style={i < on ? { background: color } : undefined} />
+      ))}
+    </div>
+  );
+}
+
+export function SourceTag({ origin, text }: { origin: DataOrigin; text?: string }) {
+  const names: Record<DataOrigin, string> = { bank: 'Данные банка', registry: 'Реестр ФНС', client: 'Вы указали', file: 'Из файла' };
+  return <span className={`src-tag ${origin}`}>{text ?? names[origin]}</span>;
+}
+
+export const DOC_STATUS: Record<DocStatus, { label: string; kind: 'high' | 'mid' | 'low' | 'neutral' | 'attention' }> = {
+  required: { label: 'Требуется', kind: 'attention' },
+  uploaded: { label: 'Загружен', kind: 'neutral' },
+  extracting: { label: 'Распознаём', kind: 'mid' },
+  check: { label: 'Проверьте поля', kind: 'attention' },
+  review: { label: 'На проверке', kind: 'mid' },
+  accepted: { label: 'Принят', kind: 'high' },
+  rejected: { label: 'Исправить', kind: 'low' },
+  expired: { label: 'Срок истёк', kind: 'low' },
+};
+
+export function DocumentStatus({ status }: { status: DocStatus }) {
+  const m = DOC_STATUS[status];
+  return <Chip kind={m.kind}>{m.label}</Chip>;
+}
+
+// ───── Трекер ─────
+
+export function Tracker({ index, stop, waiting, labels = TRACK, sub }: { index: number; stop?: boolean; waiting?: boolean; labels?: string[]; sub?: string }) {
+  return (
+    <ol className="steps" style={{ gridTemplateColumns: `repeat(${labels.length}, minmax(0, 1fr))` }} aria-label="Этапы заявки">
+      {labels.map((l, i) => {
+        const cls = i < index ? 'done' : i === index ? (stop ? 'stop' : 'now') : '';
+        return (
+          <li key={l} className={cls} aria-current={i === index ? 'step' : undefined}>
+            <span className="bar" aria-hidden="true" />
+            {l}
+            {i === index && sub && <span className="sub">{sub}</span>}
+            {i === index && waiting && !sub && <span className="sub">сейчас</span>}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+// ───── StatusBanner ─────
+
+export function StatusBanner({ kind, icon, chip, title, children, actions, facts }: { kind: BannerKind; icon?: PxName; chip?: ReactNode; title: ReactNode; children?: ReactNode; actions?: ReactNode; facts?: { label: string; value: ReactNode }[] }) {
+  const color = kind === 'success' ? 'var(--c-high)' : kind === 'error' || kind === 'decline' ? 'var(--c-negative)' : kind === 'action' ? 'var(--c-red)' : kind === 'dark' ? 'var(--c-lime)' : 'var(--c-mid)';
+  return (
+    <section className={`banner ${kind}`} aria-live="polite">
+      <div style={{ flex: '1 1 560px', minWidth: 0 }}>
+        {chip}
+        <h2 style={{ marginTop: chip ? 12 : 0 }}>{title}</h2>
+        {children && <div style={{ marginTop: 8 }}>{children}</div>}
+        {facts && (
+          <div className="facts">
+            {facts.map((f) => (
+              <div key={f.label}>
+                <span className="muted">{f.label}</span>
+                <b>{f.value}</b>
+              </div>
+            ))}
+          </div>
+        )}
+        {actions && <div className="btn-row" style={{ marginTop: 18 }}>{actions}</div>}
+      </div>
+      {icon && <Px name={icon} size={72} color={color} />}
+    </section>
   );
 }

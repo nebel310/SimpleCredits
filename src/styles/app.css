@@ -53,6 +53,71 @@ h1, h2, h3 { margin: 0; font-family: var(--f-display); font-weight: 600; line-he
 .red-card .muted { color: #fff; }
 .red-card .dl > div { border-color: var(--c-black); }
 
+/* ───── Метки ───── */
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; padding: 3px 8px; white-space: nowrap; }
+.chip.high { background: var(--c-lime-soft); color: var(--c-lime-ink); }
+.chip.mid { background: var(--c-mid-soft); color: var(--c-mid-ink); }
+.chip.low { background: var(--c-negative-soft); color: var(--c-negative-ink); }
+.chip.neutral { background: var(--c-line); color: var(--c-text); }
+.chip.dark { background: var(--c-black); color: #fff; }
+.chip.lime { background: var(--c-lime); color: var(--c-lime-ink); }
+.chip.ai { background: var(--c-ai-bg); color: var(--c-ai-ink); }
+.chip.attention { background: var(--c-attention-soft); color: #8a4b00; }
+
+/* ───── Шкала из 10 пикселей ───── */
+.meter { display: flex; gap: 3px; }
+.meter span { width: 16px; height: 16px; background: var(--c-line); }
+
+/* ───── Степпер ───── */
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.steps li { display: flex; flex-direction: column; gap: 8px; font-size: 14px; color: var(--c-text-2); }
+.steps li .bar { height: 10px; background: var(--c-border); }
+.steps li.done { color: var(--c-text); font-weight: 700; }
+.steps li.done .bar { background: var(--c-high); }
+.steps li.now { color: var(--c-mid-ink); font-weight: 700; }
+.steps li.now .bar { background: var(--c-ai); }
+.steps li.stop .bar { background: var(--c-negative); }
+.steps li.stop { color: var(--c-negative-ink); font-weight: 700; }
+.steps li .sub { font-size: 12px; font-weight: 600; }
+
+/* ───── Списки определений ───── */
+.dl { margin: 0; display: flex; flex-direction: column; gap: 10px; font-size: 15px; }
+.dl > div { display: flex; justify-content: space-between; gap: 12px; }
+.dl dt { color: var(--c-text-2); }
+.dl dd { margin: 0; font-weight: 600; text-align: right; }
+.dl .sep { padding-top: 10px; border-top: 1px solid var(--c-line); }
+.dl-grid { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 14px 24px; font-size: 15px; }
+.dl-grid dt { font-size: 13px; color: var(--c-text-2); }
+.dl-grid dd { margin: 2px 0 0; font-weight: 600; }
+
+/* ───── Таблица ───── */
+.tbl-wrap { overflow-x: auto; }
+.tbl { width: 100%; border-collapse: collapse; font-size: 15px; }
+.tbl th { text-align: left; font-size: 13px; font-weight: 600; color: var(--c-text-2); padding: 10px 12px; white-space: nowrap; }
+.tbl td { padding: 14px 12px; border-top: 1px solid var(--c-line); vertical-align: middle; }
+.tbl tr.hl td { background: var(--c-ai-bg); }
+.tbl td:first-child, .tbl th:first-child { padding-left: 0; }
+
+/* ───── Лента событий ───── */
+.feed { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.feed li { display: grid; grid-template-columns: 52px 12px 1fr; gap: 10px; padding: 10px 0; border-top: 1px solid var(--c-line); font-size: 14px; }
+.feed li:first-child { border-top: 0; }
+.feed .t { color: var(--c-text-2); font-size: 13px; }
+.feed .dot { width: 10px; height: 10px; margin-top: 5px; }
+.feed .who-s { font-size: 12px; color: var(--c-text-2); }
+
+/* ───── Баннер статуса ───── */
+.banner { border-radius: var(--r-card); padding: 28px 32px; display: flex; flex-wrap: wrap; gap: 20px 32px; align-items: center; justify-content: space-between; }
+.banner.wait { background: var(--c-white); box-shadow: inset 0 0 0 2px var(--c-mid-soft); }
+.banner.success { background: var(--c-white); box-shadow: inset 0 0 0 2px var(--c-high); }
+.banner.action { background: var(--c-white); box-shadow: inset 0 0 0 2px var(--c-red); }
+.banner.error { background: var(--c-negative-soft); }
+.banner.decline { background: var(--c-white); box-shadow: inset 0 0 0 2px var(--c-border); }
+.banner.dark { background: var(--c-black); color: #fff; }
+.banner h2 { font-size: 26px; }
+.banner .facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 18px; font-size: 14px; }
+.banner .facts b { display: block; font-size: 15px; }
+
 /* ───── Поля ───── */
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field > label, .field .lbl { font-size: 14px; font-weight: 600; }
