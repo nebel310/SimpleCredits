@@ -4,165 +4,112 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
-ProductType = Literal[
-    "PRODUCT_TYPE_UNSPECIFIED",
-    "PRODUCT_TYPE_MICROLOAN",
-    "PRODUCT_TYPE_TERM_LOAN",
-    "PRODUCT_TYPE_OVERDRAFT",
-    "PRODUCT_TYPE_CREDIT_LINE",
-    "PRODUCT_TYPE_LEASING",
-]
-
-FinancingPurpose = Literal[
-    "FINANCING_PURPOSE_UNSPECIFIED",
-    "FINANCING_PURPOSE_WORKING_CAPITAL",
-    "FINANCING_PURPOSE_EQUIPMENT",
-    "FINANCING_PURPOSE_EXPANSION",
-    "FINANCING_PURPOSE_REFINANCING",
-    "FINANCING_PURPOSE_OTHER",
-]
-
-BusinessSegment = Literal[
-    "BUSINESS_SEGMENT_UNSPECIFIED",
-    "BUSINESS_SEGMENT_MICRO",
-    "BUSINESS_SEGMENT_SMALL",
-]
-
-LegalForm = Literal[
-    "LEGAL_FORM_UNSPECIFIED",
-    "LEGAL_FORM_LLC",
-    "LEGAL_FORM_INDIVIDUAL_ENTREPRENEUR",
-    "LEGAL_FORM_JOINT_STOCK_COMPANY",
-]
-
-RiskGrade = Literal[
-    "RISK_GRADE_UNSPECIFIED",
-    "RISK_GRADE_A",
-    "RISK_GRADE_B",
-    "RISK_GRADE_C",
-    "RISK_GRADE_D",
-    "RISK_GRADE_E",
-]
-
-ReasonImpact = Literal[
-    "REASON_IMPACT_UNSPECIFIED",
-    "REASON_IMPACT_POSITIVE",
-    "REASON_IMPACT_NEGATIVE",
-    "REASON_IMPACT_NEUTRAL",
-]
-
-Decision = Literal[
-    "DECISION_UNSPECIFIED",
-    "DECISION_APPROVE",
-    "DECISION_APPROVE_WITH_CONDITIONS",
-    "DECISION_MANUAL_REVIEW",
-    "DECISION_DECLINE",
-]
+ProductType = Literal["microloan", "term_loan", "overdraft", "credit_line", "leasing"]
+FinancingPurpose = Literal["working_capital", "equipment", "expansion", "refinancing", "other"]
+BusinessSegment = Literal["micro", "small"]
+LegalForm = Literal["llc", "individual_entrepreneur", "joint_stock_company"]
+RiskGrade = Literal["A", "B", "C", "D", "E"]
+Decision = Literal["approve", "approve_with_conditions", "manual_review", "decline"]
+ReasonImpact = Literal["positive", "negative", "neutral"]
 
 
 class SApplication(BaseModel):
-    product_type: ProductType = "PRODUCT_TYPE_UNSPECIFIED"
-    requested_amount_rub: int = Field(default=0, ge=0)
-    term_months: int = Field(default=0, ge=0)
-    purpose: FinancingPurpose = "FINANCING_PURPOSE_UNSPECIFIED"
-    segment: BusinessSegment = "BUSINESS_SEGMENT_UNSPECIFIED"
-    submitted_at: datetime | None = None
+    """Параметры кредитной заявки"""
+    product_type: ProductType
+    requested_amount_rub: int = Field(..., ge=0)
+    term_months: int = Field(..., ge=1)
+    purpose: FinancingPurpose
+    segment: BusinessSegment
+    submitted_at: datetime
 
 
 class SCompany(BaseModel):
-    inn: str = Field(default="", max_length=12)
-    ogrn: str = Field(default="", max_length=15)
-    legal_name: str = ""
-    legal_form: LegalForm = "LEGAL_FORM_UNSPECIFIED"
-    okved: str = ""
-    region: str = ""
-    registration_date: datetime | None = None
-    employee_count: int = Field(default=0, ge=0)
+    """Данные компании-заемщика"""
+    inn: str = Field(..., min_length=10, max_length=12)
+    ogrn: str = Field(..., min_length=13, max_length=15)
+    legal_name: str
+    legal_form: LegalForm
+    okved: str
+    region: str
+    registration_date: datetime
+    employee_count: int = Field(..., ge=0)
 
 
 class SFinancials(BaseModel):
-    annual_revenue_rub: int = Field(default=0, ge=0)
-    annual_net_profit_rub: int = 0
-    ebitda_rub: int = 0
-    total_debt_rub: int = Field(default=0, ge=0)
-    monthly_revenue_rub: int = Field(default=0, ge=0)
-    monthly_expenses_rub: int = Field(default=0, ge=0)
-    accounts_receivable_rub: int = Field(default=0, ge=0)
-    cash_balance_rub: int = 0
-    period_end: datetime | None = None
+    """Финансовые показатели компании"""
+    annual_revenue_rub: int = Field(..., ge=0)
+    annual_net_profit_rub: int
+    ebitda_rub: int
+    total_debt_rub: int = Field(..., ge=0)
+    monthly_revenue_rub: int = Field(..., ge=0)
+    monthly_expenses_rub: int = Field(..., ge=0)
+    accounts_receivable_rub: int = Field(..., ge=0)
+    cash_balance_rub: int = Field(..., ge=0)
+    period_end: datetime
 
 
 class SCreditHistory(BaseModel):
-    active_obligations_count: int = Field(default=0, ge=0)
-    total_outstanding_rub: int = Field(default=0, ge=0)
-    monthly_debt_payments_rub: int = Field(default=0, ge=0)
-    max_days_past_due_12m: int = Field(default=0, ge=0)
-    has_current_past_due: bool = False
-    credit_utilization: float = Field(default=0.0, ge=0.0)
-    closed_obligations_count: int = Field(default=0, ge=0)
-    applications_last_6m: int = Field(default=0, ge=0)
+    """Кредитная история заемщика"""
+    active_obligations_count: int = Field(..., ge=0)
+    total_outstanding_rub: int = Field(..., ge=0)
+    monthly_debt_payments_rub: int = Field(..., ge=0)
+    max_days_past_due_12m: int = Field(..., ge=0)
+    has_current_past_due: bool
+    credit_utilization: float = Field(..., ge=0.0, le=1.0)
+    closed_obligations_count: int = Field(..., ge=0)
+    applications_last_6m: int = Field(..., ge=0)
 
 
 class SScoreApplicationRequest(BaseModel):
-    application_id: str = Field(min_length=1, max_length=128)
+    """Тело запроса скоринга от клиента"""
     application: SApplication
     company: SCompany
     financials: SFinancials
     credit_history: SCreditHistory
-    extra_numeric_features: dict[str, float] = Field(default_factory=dict, max_length=512)
-    extra_categorical_features: dict[str, str] = Field(default_factory=dict, max_length=512)
 
     model_config = ConfigDict(
         json_schema_extra={
             "examples": [
                 {
-                    "application_id": "demo-good-001",
                     "application": {
-                        "product_type": "PRODUCT_TYPE_TERM_LOAN",
-                        "requested_amount_rub": 3000000,
+                        "product_type": "term_loan",
+                        "requested_amount_rub": 1500000,
                         "term_months": 24,
-                        "purpose": "FINANCING_PURPOSE_EQUIPMENT",
-                        "segment": "BUSINESS_SEGMENT_SMALL",
+                        "purpose": "equipment",
+                        "segment": "small",
+                        "submitted_at": "2026-03-15T10:00:00Z"
                     },
                     "company": {
-                        "inn": "7700000001",
-                        "ogrn": "1167746000001",
-                        "legal_name": "ООО Пример",
-                        "legal_form": "LEGAL_FORM_LLC",
+                        "inn": "7701234567",
+                        "ogrn": "1027700132195",
+                        "legal_name": "ООО Ромашка",
+                        "legal_form": "llc",
                         "okved": "62.01",
                         "region": "Москва",
-                        "registration_date": "2016-05-10T00:00:00Z",
-                        "employee_count": 30,
+                        "registration_date": "2018-04-12T00:00:00Z",
+                        "employee_count": 25
                     },
                     "financials": {
-                        "annual_revenue_rub": 120000000,
-                        "annual_net_profit_rub": 18000000,
-                        "ebitda_rub": 24000000,
-                        "total_debt_rub": 10000000,
-                        "monthly_revenue_rub": 10000000,
-                        "monthly_expenses_rub": 7500000,
-                        "accounts_receivable_rub": 4000000,
-                        "cash_balance_rub": 5000000,
-                        "period_end": "2025-12-31T00:00:00Z",
+                        "annual_revenue_rub": 42000000,
+                        "annual_net_profit_rub": 6500000,
+                        "ebitda_rub": 8200000,
+                        "total_debt_rub": 3000000,
+                        "monthly_revenue_rub": 3500000,
+                        "monthly_expenses_rub": 2800000,
+                        "accounts_receivable_rub": 1200000,
+                        "cash_balance_rub": 900000,
+                        "period_end": "2025-12-31T00:00:00Z"
                     },
                     "credit_history": {
-                        "active_obligations_count": 1,
-                        "total_outstanding_rub": 2000000,
-                        "monthly_debt_payments_rub": 150000,
+                        "active_obligations_count": 2,
+                        "total_outstanding_rub": 3000000,
+                        "monthly_debt_payments_rub": 120000,
                         "max_days_past_due_12m": 0,
                         "has_current_past_due": False,
-                        "credit_utilization": 0.2,
-                        "closed_obligations_count": 5,
-                        "applications_last_6m": 0,
-                    },
-                    "extra_numeric_features": {
-                        "bki_credit_score": 750,
-                        "tax_debt_rub": 0,
-                    },
-                    "extra_categorical_features": {
-                        "client_rating": "A",
-                        "tax_regime": "usn",
-                    },
+                        "credit_utilization": 0.35,
+                        "closed_obligations_count": 4,
+                        "applications_last_6m": 1
+                    }
                 }
             ]
         }
@@ -170,6 +117,7 @@ class SScoreApplicationRequest(BaseModel):
 
 
 class SReasonCode(BaseModel):
+    """Фактор, повлиявший на скоринговый балл"""
     code: str
     description: str
     feature: str
@@ -178,31 +126,167 @@ class SReasonCode(BaseModel):
 
 
 class SDecisionCondition(BaseModel):
+    """Условие, при котором банк готов одобрить заявку"""
     code: str
     description: str
     recommended_amount_rub: int
 
 
 class SDecisionResult(BaseModel):
+    """Итоговое кредитное решение"""
     decision: Decision
-    reason_codes: list[str] = Field(default_factory=list)
-    conditions: list[SDecisionCondition] = Field(default_factory=list)
+    reason_codes: list[str] = []
+    conditions: list[SDecisionCondition] = []
 
 
 class SScoreApplicationResponse(BaseModel):
+    """Ответ ML-сервиса с результатом скоринга"""
     application_id: str
     score: int
     pd: float
     risk_grade: RiskGrade
     reason_codes: list[SReasonCode]
     model_version: str
-    scored_at: datetime
-    decision: SDecisionResult
+    scored_at: datetime | None = None
+    decision: SDecisionResult | None = None
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "application_id": "8a3f9c2e1b4d4f5a9c7d6b5a4e3f2d1c",
+                    "score": 712,
+                    "pd": 0.0421,
+                    "risk_grade": "B",
+                    "reason_codes": [
+                        {
+                            "code": "RC001",
+                            "description": "Стабильная кредитная история",
+                            "feature": "max_days_past_due_12m",
+                            "impact": "positive",
+                            "contribution": -0.12
+                        }
+                    ],
+                    "model_version": "v1.0.0",
+                    "scored_at": "2026-03-15T10:00:01Z",
+                    "decision": {
+                        "decision": "approve",
+                        "reason_codes": ["RC001"],
+                        "conditions": []
+                    }
+                }
+            ]
+        }
+    )
+
+
+class SBatchScoreApplicationsRequest(BaseModel):
+    """Пакетный запрос скоринга"""
+    applications: list[SScoreApplicationRequest] = Field(..., min_length=1, max_length=100)
+
+
+class SBatchScoreApplicationsResponse(BaseModel):
+    """Пакетный ответ скоринга"""
+    results: list[SScoreApplicationResponse]
 
 
 class SModelInfoResponse(BaseModel):
+    """Информация о загруженной ML-модели"""
     model_version: str
     model_type: str
     trained_at: datetime | None = None
-    features: list[str] = Field(default_factory=list)
-    metrics: dict[str, float] = Field(default_factory=dict)
+    features: list[str] = []
+    metrics: dict[str, float] = {}
+    
+    
+class SApplicationDetail(BaseModel):
+    """Полные данные заявки с результатом скоринга"""
+    application_id: str
+    status: str
+    created_at: datetime
+    application: SApplication
+    company: SCompany
+    financials: SFinancials
+    credit_history: SCreditHistory
+    scoring_result: SScoreApplicationResponse | None = None
+
+
+class SApplicationListResponse(BaseModel):
+    """Список заявок с курсорной пагинацией"""
+    applications: list[SApplicationDetail]
+    next_cursor: str | None = None
+    previous_cursor: str | None = None
+
+
+def application_orm_to_schema(application, scoring_result=None) -> SApplicationDetail:
+    """Собирает SApplicationDetail из ORM-моделей заявки и результата скоринга"""
+    detail = SApplicationDetail(
+        application_id=application.application_id,
+        status=application.status,
+        created_at=application.created_at,
+        application=SApplication(
+            product_type=application.product_type,
+            requested_amount_rub=application.requested_amount_rub,
+            term_months=application.term_months,
+            purpose=application.purpose,
+            segment=application.segment,
+            submitted_at=application.submitted_at,
+        ),
+        company=SCompany(
+            inn=application.inn,
+            ogrn=application.ogrn,
+            legal_name=application.legal_name,
+            legal_form=application.legal_form,
+            okved=application.okved,
+            region=application.region,
+            registration_date=application.registration_date,
+            employee_count=application.employee_count,
+        ),
+        financials=SFinancials(
+            annual_revenue_rub=application.annual_revenue_rub,
+            annual_net_profit_rub=application.annual_net_profit_rub,
+            ebitda_rub=application.ebitda_rub,
+            total_debt_rub=application.total_debt_rub,
+            monthly_revenue_rub=application.monthly_revenue_rub,
+            monthly_expenses_rub=application.monthly_expenses_rub,
+            accounts_receivable_rub=application.accounts_receivable_rub,
+            cash_balance_rub=application.cash_balance_rub,
+            period_end=application.period_end,
+        ),
+        credit_history=SCreditHistory(
+            active_obligations_count=application.active_obligations_count,
+            total_outstanding_rub=application.total_outstanding_rub,
+            monthly_debt_payments_rub=application.monthly_debt_payments_rub,
+            max_days_past_due_12m=application.max_days_past_due_12m,
+            has_current_past_due=application.has_current_past_due,
+            credit_utilization=application.credit_utilization,
+            closed_obligations_count=application.closed_obligations_count,
+            applications_last_6m=application.applications_last_6m,
+        ),
+    )
+
+    if scoring_result is not None:
+        decision = None
+        if scoring_result.decision is not None:
+            decision = SDecisionResult(
+                decision=scoring_result.decision,
+                reason_codes=[],
+                conditions=[
+                    SDecisionCondition(**c) for c in (scoring_result.conditions or [])
+                ],
+            )
+
+        detail.scoring_result = SScoreApplicationResponse(
+            application_id=scoring_result.application_id,
+            score=scoring_result.score,
+            pd=scoring_result.pd,
+            risk_grade=scoring_result.risk_grade,
+            reason_codes=[
+                SReasonCode(**rc) for rc in (scoring_result.reason_codes or [])
+            ],
+            model_version=scoring_result.model_version,
+            scored_at=scoring_result.scored_at,
+            decision=decision,
+        )
+
+    return detail

@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-from simplecredits.scoring.v1 import scoring_pb2 as simplecredits_dot_scoring_dot_v1_dot_scoring__pb2
+from . import scoring_pb2 as simplecredits_dot_scoring_dot_v1_dot_scoring__pb2
 
 GRPC_GENERATED_VERSION = '1.84.1'
 GRPC_VERSION = grpc.__version__

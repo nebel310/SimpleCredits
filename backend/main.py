@@ -1,5 +1,8 @@
 import os
+
 import uvicorn
+from ml_grpc.client import ScoringClient
+from router.scoring import router as scoring_router
 
 from contextlib import asynccontextmanager
 
@@ -11,7 +14,6 @@ from database import create_tables
 from database import delete_tables
 from router.auth import router as auth_router
 from router.files import router as file_router
-from router.scoring import router as scoring_router
 from repositories.auth import UserRepository
 from minio.client import s3_client
 
@@ -20,26 +22,26 @@ from minio.client import s3_client
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Управление жизненным циклом приложения."""
-    # await delete_tables()
-    # print('База очищена')
-    
+    """Управление жизненным циклом приложения"""
     await create_tables()
-    print('База готова к работе')
-    
+    print("База готова к работе")
+
     await s3_client.ensure_bucket()
-    print(f'Бакет {s3_client.bucket_name} создан')
-    
-    await UserRepository.ensure_admin(
-        email=os.getenv("ADMIN_EMAIL", "admin@example.com"),
-        password=os.getenv("ADMIN_PASSWORD", "adminpassword"),
-        username=os.getenv("ADMIN_USERNAME", "admin"),
+    print(f"Бакет {s3_client.bucket_name} создан")
+
+    scoring_client = ScoringClient(
+        host=os.getenv("ML_GRPC_HOST", "ml"),
+        port=int(os.getenv("ML_GRPC_PORT", "50051")),
+        timeout=float(os.getenv("ML_GRPC_TIMEOUT", "10.0")),
     )
-    print("Администратор готов")
-    
+    await scoring_client.start()
+    app.state.scoring_client = scoring_client
+    print(f"gRPC-клиент подключён к {scoring_client.host}:{scoring_client.port}")
+
     yield
-    
-    print('Выключение')
+
+    await scoring_client.close()
+    print("Выключение")
 
 
 
@@ -82,7 +84,10 @@ def custom_openapi():
         ("/files/{file_id}", "get"): [{"Bearer": []}],
         ("/files/{file_id}/info", "get"): [{"Bearer": []}],
         ("/files/{file_id}", "delete"): [{"Bearer": []}],
-        ("/scoring/score", "post"): [{"Bearer": []}],
+        ("/scoring/applications", "post"): [{"Bearer": []}],
+        ("/scoring/applications", "get"): [{"Bearer": []}],
+        ("/scoring/applications/{application_id}", "get"): [{"Bearer": []}],
+        ("/scoring/batch", "post"): [{"Bearer": []}],
         ("/scoring/model-info", "get"): [{"Bearer": []}],
     }
     
@@ -117,7 +122,6 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(file_router)
 app.include_router(scoring_router)
-
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ help:
 	@echo "test-e2e         - только e2e-тесты"
 	@echo "test-cov         - все тесты с покрытием"
 	@echo "clean            - удалить кэши pytest и __pycache__"
+	@echo "proto            - сгенерировать gRPC-стабы из ../proto"
 
 install:
 	uv sync --all-groups
@@ -42,3 +43,6 @@ test-cov:
 clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 	rm -rf .pytest_cache .coverage htmlcov
+
+proto:
+	uv run python scripts/generate_proto.py
