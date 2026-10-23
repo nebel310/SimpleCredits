@@ -34,6 +34,25 @@ services:
       timeout: 20s
       retries: 3
 
+  scoring:
+    build:
+      context: .
+      dockerfile: ml/Dockerfile
+    container_name: scoring
+    ports:
+      - "50051:50051"
+    environment:
+      MODEL_PATH: /app/ml/artifacts/model.joblib
+      GRPC_PORT: 50051
+      GRPC_WORKERS: 8
+    healthcheck:
+      test: ["CMD", "python", "-c", "import grpc; from grpc_health.v1 import health_pb2, health_pb2_grpc; r=health_pb2_grpc.HealthStub(grpc.insecure_channel('localhost:50051')).Check(health_pb2.HealthCheckRequest(), timeout=3); raise SystemExit(r.status != health_pb2.HealthCheckResponse.SERVING)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
   backend:
     build: ./backend
     container_name: backend
@@ -49,10 +68,14 @@ services:
       - MINIO_ROOT_USER=${MINIO_ROOT_USER}
       - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
       - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME}
+      - SCORING_GRPC_ADDR=${SCORING_GRPC_ADDR:-scoring:50051}
+      - SCORING_TIMEOUT_SECONDS=${SCORING_TIMEOUT_SECONDS:-10}
     depends_on:
       db:
         condition: service_healthy
       minio:
+        condition: service_healthy
+      scoring:
         condition: service_healthy
     volumes:
       - ./backend:/app

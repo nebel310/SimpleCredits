@@ -11,6 +11,7 @@ from database import create_tables
 from database import delete_tables
 from router.auth import router as auth_router
 from router.files import router as file_router
+from router.scoring import router as scoring_router
 from repositories.auth import UserRepository
 from minio.client import s3_client
 
@@ -81,6 +82,8 @@ def custom_openapi():
         ("/files/{file_id}", "get"): [{"Bearer": []}],
         ("/files/{file_id}/info", "get"): [{"Bearer": []}],
         ("/files/{file_id}", "delete"): [{"Bearer": []}],
+        ("/scoring/score", "post"): [{"Bearer": []}],
+        ("/scoring/model-info", "get"): [{"Bearer": []}],
     }
     
     for (path, method), security in secured_paths.items():
@@ -113,6 +116,7 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(file_router)
+app.include_router(scoring_router)
 
 
 
