@@ -1,13 +1,13 @@
 import grpc
 from grpc import aio
 
-from grpc.exceptions import (
+from ml_grpc.exceptions import (
     GrpcDeadlineExceededError,
     GrpcInvalidArgumentError,
     GrpcServiceError,
     GrpcUnavailableError,
 )
-from grpc.generated.simplecredits.scoring.v1 import scoring_pb2, scoring_pb2_grpc
+from ml_grpc.generated.simplecredits.scoring.v1 import scoring_pb2, scoring_pb2_grpc
 
 
 class ScoringClient:

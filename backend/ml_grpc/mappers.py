@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from google.protobuf.timestamp_pb2 import Timestamp
 
-from grpc.generated.simplecredits.scoring.v1 import scoring_pb2
+from ml_grpc.generated.simplecredits.scoring.v1 import scoring_pb2
 
 from schemas.scoring import (
     SApplication,

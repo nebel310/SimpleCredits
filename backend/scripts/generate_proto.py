@@ -7,7 +7,7 @@ import grpc_tools
 
 BACKEND_ROOT = Path(__file__).resolve().parent.parent
 PROTO_ROOT = BACKEND_ROOT.parent / "proto"
-OUTPUT_DIR = BACKEND_ROOT / "grpc" / "generated"
+OUTPUT_DIR = BACKEND_ROOT / "ml_grpc" / "generated"
 WELL_KNOWN_PROTO_DIR = Path(grpc_tools.__file__).parent / "_proto"
 
 

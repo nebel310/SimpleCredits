@@ -197,3 +197,96 @@ class SModelInfoResponse(BaseModel):
     trained_at: datetime | None = None
     features: list[str] = []
     metrics: dict[str, float] = {}
+    
+    
+class SApplicationDetail(BaseModel):
+    """Полные данные заявки с результатом скоринга"""
+    application_id: str
+    status: str
+    created_at: datetime
+    application: SApplication
+    company: SCompany
+    financials: SFinancials
+    credit_history: SCreditHistory
+    scoring_result: SScoreApplicationResponse | None = None
+
+
+class SApplicationListResponse(BaseModel):
+    """Список заявок с курсорной пагинацией"""
+    applications: list[SApplicationDetail]
+    next_cursor: str | None = None
+    previous_cursor: str | None = None
+
+
+def application_orm_to_schema(application, scoring_result=None) -> SApplicationDetail:
+    """Собирает SApplicationDetail из ORM-моделей заявки и результата скоринга"""
+    detail = SApplicationDetail(
+        application_id=application.application_id,
+        status=application.status,
+        created_at=application.created_at,
+        application=SApplication(
+            product_type=application.product_type,
+            requested_amount_rub=application.requested_amount_rub,
+            term_months=application.term_months,
+            purpose=application.purpose,
+            segment=application.segment,
+            submitted_at=application.submitted_at,
+        ),
+        company=SCompany(
+            inn=application.inn,
+            ogrn=application.ogrn,
+            legal_name=application.legal_name,
+            legal_form=application.legal_form,
+            okved=application.okved,
+            region=application.region,
+            registration_date=application.registration_date,
+            employee_count=application.employee_count,
+        ),
+        financials=SFinancials(
+            annual_revenue_rub=application.annual_revenue_rub,
+            annual_net_profit_rub=application.annual_net_profit_rub,
+            ebitda_rub=application.ebitda_rub,
+            total_debt_rub=application.total_debt_rub,
+            monthly_revenue_rub=application.monthly_revenue_rub,
+            monthly_expenses_rub=application.monthly_expenses_rub,
+            accounts_receivable_rub=application.accounts_receivable_rub,
+            cash_balance_rub=application.cash_balance_rub,
+            period_end=application.period_end,
+        ),
+        credit_history=SCreditHistory(
+            active_obligations_count=application.active_obligations_count,
+            total_outstanding_rub=application.total_outstanding_rub,
+            monthly_debt_payments_rub=application.monthly_debt_payments_rub,
+            max_days_past_due_12m=application.max_days_past_due_12m,
+            has_current_past_due=application.has_current_past_due,
+            credit_utilization=application.credit_utilization,
+            closed_obligations_count=application.closed_obligations_count,
+            applications_last_6m=application.applications_last_6m,
+        ),
+    )
+
+    if scoring_result is not None:
+        decision = None
+        if scoring_result.decision is not None:
+            decision = SDecisionResult(
+                decision=scoring_result.decision,
+                reason_codes=[],
+                conditions=[
+                    SDecisionCondition(**c) for c in (scoring_result.conditions or [])
+                ],
+            )
+
+        detail.scoring_result = SScoreApplicationResponse(
+            application_id=scoring_result.application_id,
+            score=scoring_result.score,
+            pd=scoring_result.pd,
+            risk_grade=scoring_result.risk_grade,
+            reason_codes=[
+                SReasonCode(**rc) for rc in (scoring_result.reason_codes or [])
+            ],
+            model_version=scoring_result.model_version,
+            scored_at=scoring_result.scored_at,
+            decision=decision,
+        )
+
+    return detail
