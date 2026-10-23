@@ -13,6 +13,7 @@ import { Signing } from './pages/client/Signing';
 import { Loan } from './pages/client/Loan';
 import { Documents } from './pages/client/Documents';
 import { AllApplications, Queue } from './pages/bank/Queue';
+import { BankApplication } from './pages/bank/BankApplication';
 
 function Home() {
   const user = useSession((s) => s.user);
@@ -41,6 +42,7 @@ export function App() {
         <Route path="/documents" element={C(<Documents />)} />
         <Route path="/bank" element={B(<Queue />)} />
         <Route path="/bank/all" element={B(<AllApplications />)} />
+        <Route path="/bank/applications/:id" element={B(<BankApplication />)} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <Toasts />
