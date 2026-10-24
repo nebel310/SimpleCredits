@@ -4,7 +4,7 @@ import { useLiveUpdates } from '../../api/ws';
 import { useQuery } from '../../lib/hooks';
 import { loadProducts, productByType, productName } from '../../lib/catalog';
 import { date, dateTime, money, months, pct, time } from '../../lib/format';
-import { CONDITION_NAME, DECISION_NAME, GRADE_KIND, LEGAL_FORM_NAME, POLICY_REASON, PURPOSE_NAME, SEGMENT_NAME, STATUS, eventText, outcomeText, trackIndex } from '../../lib/labels';
+import { CONDITION_NAME, DECISION_NAME, FEATURE_NOT_IN_APPLICATION, factorTitle, GRADE_KIND, LEGAL_FORM_NAME, POLICY_REASON, PURPOSE_NAME, SEGMENT_NAME, STATUS, eventText, outcomeText, trackIndex } from '../../lib/labels';
 import { Btn, Chip, EmptyState, ErrorState, Loading, Meter, PageTitle, StatusBanner, Tracker } from '../../ui/kit';
 
 const yesNo = (b: boolean) => (b ? 'да' : 'нет');
@@ -162,8 +162,9 @@ function View({ a, events, products, bank }: { a: Application; events: AppEvent[
                   <li key={r.code}>
                     <div className="row-c between" style={{ flexWrap: 'nowrap' }}>
                       <span>
-                        <b>{r.description}</b>
-                        <span className="xs muted"> · {r.feature}</span>
+                        <b>{factorTitle(r)}</b>
+                        {bank && <span className="xs muted"> · {r.feature}</span>}
+                        {FEATURE_NOT_IN_APPLICATION.has(r.feature) && <span className="xs muted"> · в заявке таких данных нет, модель взяла значение по умолчанию</span>}
                       </span>
                       <Chip kind={r.impact === 'positive' ? 'high' : r.impact === 'negative' ? 'low' : 'neutral'}>{r.impact === 'positive' ? 'снижает риск' : r.impact === 'negative' ? 'повышает риск' : 'нейтрально'}</Chip>
                     </div>

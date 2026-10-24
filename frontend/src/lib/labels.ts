@@ -40,6 +40,22 @@ export const POLICY_REASON: Record<string, string> = {
   LOAN_TO_REVENUE_REDUCTION: 'Запрошенная сумма больше 60% годовой выручки',
 };
 
+/** Факторы, для которых модель отдаёт только общее «Фактор повышает/снижает риск» */
+export const FEATURE_NAME: Record<string, string> = {
+  social_followers: 'Подписчики в соцсетях',
+  website_visits: 'Посещаемость сайта',
+  geo_reviews_count: 'Отзывы на картах',
+  log_total_outstanding: 'Остаток долга по кредитам',
+};
+
+/** Этих данных нет в заявке: модель подставляет для них значение по умолчанию */
+export const FEATURE_NOT_IN_APPLICATION = new Set(['social_followers', 'website_visits', 'geo_reviews_count']);
+
+/** Понятное название фактора: описание модели, а если оно общее — название признака */
+export function factorTitle(r: { feature: string; description: string }): string {
+  return r.description.startsWith('Фактор ') && FEATURE_NAME[r.feature] ? FEATURE_NAME[r.feature] : r.description;
+}
+
 export const CONDITION_NAME: Record<string, string> = { REDUCE_AMOUNT: 'Снизить сумму' };
 
 export type ChipKind = 'high' | 'mid' | 'low' | 'neutral' | 'attention';
