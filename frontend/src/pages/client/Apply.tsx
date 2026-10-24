@@ -5,7 +5,7 @@ import { useLiveUpdates } from '../../api/ws';
 import { useAction, useQuery } from '../../lib/hooks';
 import { loadProducts } from '../../lib/catalog';
 import { demoByEmail } from '../../lib/demo';
-import { mln, money, months } from '../../lib/format';
+import { money, months, monthsUpTo, short } from '../../lib/format';
 import { LEGAL_FORM_NAME, PURPOSE_NAME, SEGMENT_NAME } from '../../lib/labels';
 import { Btn, ErrorState, Loading, MoneyField, PageTitle, RadioGroup, SelectField, StatusBanner, TextField, Tracker } from '../../ui/kit';
 
@@ -83,18 +83,25 @@ export function Apply() {
     );
   }
 
+  // Без выбранного продукта — общие границы всего каталога, чтобы банк смог что-то подобрать
+  const list = products.data ?? [];
+  const lim = product
+    ? { aMin: product.min_amount_rub, aMax: product.max_amount_rub, tMin: product.min_term_months, tMax: product.max_term_months, who: `Для продукта «${product.name}»` }
+    : list.length
+      ? { aMin: Math.min(...list.map((p) => p.min_amount_rub)), aMax: Math.max(...list.map((p) => p.max_amount_rub)), tMin: Math.min(...list.map((p) => p.min_term_months)), tMax: Math.max(...list.map((p) => p.max_term_months)), who: 'По нашим продуктам' }
+      : null;
   const err = {
     amount:
       amount === null || amount <= 0
         ? 'Укажите сумму'
-        : product && (amount < product.min_amount_rub || amount > product.max_amount_rub)
-          ? `Для продукта «${product.name}» — от ${mln(product.min_amount_rub)} до ${mln(product.max_amount_rub)}`
+        : lim && (amount < lim.aMin || amount > lim.aMax)
+          ? `${lim.who} — от ${money(lim.aMin)} до ${money(lim.aMax)}`
           : null,
     term:
       term === null || term < 1
         ? 'Укажите срок'
-        : product && (term < product.min_term_months || term > product.max_term_months)
-          ? `Для продукта «${product.name}» — от ${product.min_term_months} до ${months(product.max_term_months)}`
+        : lim && (term < lim.tMin || term > lim.tMax)
+          ? `${lim.who} — от ${lim.tMin} до ${monthsUpTo(lim.tMax)}`
           : null,
   };
   const valid = !err.amount && !err.term;
@@ -129,15 +136,15 @@ export function Apply() {
                   <button key={p.code} type="button" className="choice" aria-pressed={code === p.code} onClick={() => pick(p)}>
                     <b>{p.name}</b>
                     <small>
-                      {mln(p.min_amount_rub)} — {mln(p.max_amount_rub)} · до {months(p.max_term_months)}
+                      {short(p.min_amount_rub)} — {short(p.max_amount_rub)} · до {monthsUpTo(p.max_term_months)}
                     </small>
                   </button>
                 ))}
               </div>
             )}
             <div className="grid-fields">
-              <MoneyField label="Сумма" value={amount} onChange={setAmount} error={tried ? err.amount : null} hint={product ? `От ${mln(product.min_amount_rub)} до ${mln(product.max_amount_rub)}` : undefined} />
-              <TextField label="Срок, месяцев" value={term === null ? '' : String(term)} inputMode="numeric" onChange={(v) => setTerm(v.replace(/\D/g, '') ? Number(v.replace(/\D/g, '').slice(0, 3)) : null)} error={tried ? err.term : null} hint={product ? `От ${product.min_term_months} до ${product.max_term_months}` : undefined} />
+              <MoneyField label="Сумма" value={amount} onChange={setAmount} error={tried ? err.amount : null} hint={lim ? `От ${money(lim.aMin)} до ${money(lim.aMax)}` : 'Целое число рублей'} />
+              <TextField label="Срок, месяцев" value={term === null ? '' : String(term)} inputMode="numeric" onChange={(v) => setTerm(v.replace(/\D/g, '') ? Number(v.replace(/\D/g, '').slice(0, 3)) : null)} error={tried ? err.term : null} hint={lim ? `От ${lim.tMin} до ${lim.tMax}` : undefined} />
               <SelectField label="Цель" value={purpose} options={purposes.map((p) => ({ value: p, label: PURPOSE_NAME[p] }))} onChange={setPurpose} />
             </div>
             <div className="stack-s">

@@ -3,7 +3,7 @@ import { api, profileComplete, useSession } from '../../api';
 import { useLiveUpdates } from '../../api/ws';
 import { useQuery } from '../../lib/hooks';
 import { loadProducts, productName } from '../../lib/catalog';
-import { dateTime, mln, money } from '../../lib/format';
+import { dateTime, short, money } from '../../lib/format';
 import { LEGAL_FORM_NAME, STATUS } from '../../lib/labels';
 import { Btn, Chip, EmptyState, ErrorState, Loading, PageTitle, StatusBanner } from '../../ui/kit';
 import { Px } from '../../ui/Px';
@@ -107,7 +107,7 @@ export function Home() {
                 </div>
                 <div>
                   <dt>Выручка за год</dt>
-                  <dd>{mln(f.annual_revenue_rub)}</dd>
+                  <dd>{short(f.annual_revenue_rub)}</dd>
                 </div>
               </dl>
             </section>

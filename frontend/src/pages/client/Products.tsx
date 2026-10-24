@@ -1,6 +1,6 @@
 import { useQuery } from '../../lib/hooks';
 import { loadProducts } from '../../lib/catalog';
-import { mln, months, pct } from '../../lib/format';
+import { short, months, pct } from '../../lib/format';
 import { PURPOSE_NAME } from '../../lib/labels';
 import { Btn, Chip, ErrorState, Loading, PageTitle } from '../../ui/kit';
 
@@ -27,7 +27,7 @@ export function Products() {
                 <div>
                   <dt>Сумма</dt>
                   <dd>
-                    {mln(p.min_amount_rub)} — {mln(p.max_amount_rub)}
+                    {short(p.min_amount_rub)} — {short(p.max_amount_rub)}
                   </dd>
                 </div>
                 <div>

@@ -1,9 +1,13 @@
 export const money = (n: number | null | undefined, unit = '\u00a0₽') =>
   n === null || n === undefined ? '—' : new Intl.NumberFormat('ru-RU').format(Math.round(n)).replace(/[\u202f\u00a0 ]/g, '\u00a0') + unit;
 
-export const mln = (n: number) => {
-  const v = n / 1_000_000;
-  return `${(Number.isInteger(v) ? v.toString() : v.toFixed(1)).replace('.', ',')}\u00a0млн\u00a0₽`;
+/** Коротко: 50 000 → «50 тыс ₽», 1 250 000 → «1,25 млн ₽». Без потери точности при округлении */
+export const short = (n: number) => {
+  const num = (v: number, digits: number) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: digits }).format(v).replace(/[\u202f\u00a0 ]/g, '\u00a0');
+  const a = Math.abs(n);
+  if (a >= 1_000_000) return `${num(n / 1_000_000, 2)}\u00a0млн\u00a0₽`;
+  if (a >= 1_000) return `${num(n / 1_000, 1)}\u00a0тыс\u00a0₽`;
+  return money(n);
 };
 
 export const pct = (n: number, digits = 1) => `${n.toFixed(digits).replace('.', ',')}%`;
@@ -32,5 +36,8 @@ export const months = (n: number) => {
   const w = m10 === 1 && m100 !== 11 ? 'месяц' : [2, 3, 4].includes(m10) && ![12, 13, 14].includes(m100) ? 'месяца' : 'месяцев';
   return `${n} ${w}`;
 };
+
+/** После «до»: до 1 месяца, до 3 месяцев, до 24 месяцев, до 21 месяца */
+export const monthsUpTo = (n: number) => `${n} ${n % 10 === 1 && n % 100 !== 11 ? 'месяца' : 'месяцев'}`;
 
 export const newKey = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
