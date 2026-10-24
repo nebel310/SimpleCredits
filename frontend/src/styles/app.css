@@ -195,7 +195,7 @@ textarea.native { padding: 12px 14px; min-height: 96px; resize: vertical; }
 .steps li { min-width: 0; overflow-wrap: anywhere; }
 
 /* ───── Показатели и графики ───── */
-.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr)); gap: 16px; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr)); gap: 16px; }
 .kpi { display: flex; flex-direction: column; gap: 6px; }
 .factors, .bars, .how { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
 .factors li { display: flex; flex-direction: column; gap: 8px; }
