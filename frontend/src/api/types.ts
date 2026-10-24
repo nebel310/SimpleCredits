@@ -1,549 +1,230 @@
-// Доменная модель кредитного кабинета.
-// Эти типы — контракт между фронтендом и бэкендом. Мок-сервер (src/api/mock) и
-// HTTP-клиент (src/api/http.ts) реализуют один и тот же интерфейс CreditApi.
+// Типы повторяют Pydantic-схемы бэкенда (backend/schemas/*.py). Поля — как в API, без переименований.
 
-export type ClientRole = 'owner' | 'accountant' | 'viewer';
-export type BankRole = 'manager' | 'underwriter' | 'compliance';
-export type Role = ClientRole | BankRole;
-
-export const CLIENT_ROLES: ClientRole[] = ['owner', 'accountant', 'viewer'];
-export const BANK_ROLES: BankRole[] = ['manager', 'underwriter', 'compliance'];
-export const isBankRole = (r: Role): r is BankRole => (BANK_ROLES as Role[]).includes(r);
-
-export interface User {
-  id: string;
-  name: string;
-  role: Role;
-  /** Для клиентских пользователей — компания */
-  companyId?: string;
-  /** Лимит полномочий андеррайтера, ₽ */
-  authorityLimit?: number;
-}
-
-/** Сессия демо-входа. В проде — токен; сервер сам определяет роль по пользователю. */
-export interface Session {
-  userId: string;
-}
-
-export type ProductCode = 'working_capital' | 'overdraft' | 'development';
-export type BusinessGoal = 'purchase' | 'cash_gap' | 'equipment' | 'gov_contract' | 'marketplace';
-
-export interface Product {
-  code: ProductCode;
-  name: string;
-  kind: 'loan' | 'limit';
-  /** Для каких задач подходит — показываем на главной и в мастере */
-  suits: string;
-  amountMin: number;
-  amountMax: number;
-  termMin: number;
-  termMax: number;
-  /** Модельная ставка, % годовых — у каждого продукта своя */
-  ratePct: number;
-  /** Обязательные платежи (комиссии) */
-  fees: { name: string; amount?: number; pct?: number }[];
-  collateral: string;
-}
+export type Role = 'user' | 'admin';
+export type ProductType = 'microloan' | 'term_loan' | 'overdraft' | 'credit_line' | 'leasing';
+export type Purpose = 'working_capital' | 'equipment' | 'expansion' | 'refinancing' | 'other';
+export type Segment = 'micro' | 'small';
+export type LegalForm = 'llc' | 'individual_entrepreneur' | 'joint_stock_company';
+export type RiskGrade = 'A' | 'B' | 'C' | 'D' | 'E';
+export type Decision = 'approve' | 'approve_with_conditions' | 'manual_review' | 'decline';
+export type AppStatus = 'pending' | 'failed' | 'confirmed' | 'different' | 'declined';
 
 export interface Company {
-  id: string;
-  type: 'IP' | 'OOO';
-  name: string;
   inn: string;
-  ogrn: string; // ОГРН или ОГРНИП
-  regDate: string; // ISO
-  head: string; // руководитель или ИП
-  employees: number;
+  ogrn: string;
+  legal_name: string;
+  legal_form: LegalForm;
   okved: string;
-  okvedName: string;
-  address: string;
-  /** Подпись сценария на экране входа */
-  scenario: string;
+  region: string;
+  registration_date: string;
+  employee_count: number;
 }
 
-// ───────── Внешние источники и симулятор ─────────
+export interface Financials {
+  annual_revenue_rub: number;
+  annual_net_profit_rub: number;
+  ebitda_rub: number;
+  total_debt_rub: number;
+  monthly_revenue_rub: number;
+  monthly_expenses_rub: number;
+  accounts_receivable_rub: number;
+  cash_balance_rub: number;
+  period_end: string;
+}
 
-export type SourceId =
-  | 'egrul'
-  | 'fns_tax'
-  | 'bki'
-  | 'fssp'
-  | 'arbitr'
-  | 'compliance'
-  | 'ocr'
-  | 'ai'
-  | 'esign'
-  | 'abs'
-  | 'gateway';
+export interface CreditHistory {
+  active_obligations_count: number;
+  total_outstanding_rub: number;
+  monthly_debt_payments_rub: number;
+  max_days_past_due_12m: number;
+  has_current_past_due: boolean;
+  credit_utilization: number;
+  closed_obligations_count: number;
+  applications_last_6m: number;
+}
 
-export type SourceMode = 'SUCCESS' | 'SLOW' | 'TIMEOUT' | 'ERROR';
+export interface User {
+  id: number;
+  username: string;
+  email: string;
+  role: Role;
+  created_at: string;
+  company: Company | null;
+  financials: Financials | null;
+  credit_history: CreditHistory | null;
+}
 
-export interface SourceState {
-  id: SourceId;
+export interface ProfileInput {
+  username?: string;
+  company?: Company;
+  financials?: Financials;
+  credit_history?: CreditHistory;
+}
+
+export interface Product {
+  id: number;
+  code: string;
   name: string;
   description: string;
-  enabled: boolean;
-  mode: SourceMode;
-  lastCall?: { at: string; result: 'SUCCESS' | 'TIMEOUT' | 'ERROR'; ms: number; appId?: string };
-  /** Заявки, которые сейчас ждут этот источник */
-  affected?: { id: string; number: string }[];
+  product_type: ProductType;
+  segment: 'micro' | 'small' | 'both';
+  min_amount_rub: number;
+  max_amount_rub: number;
+  min_term_months: number;
+  max_term_months: number;
+  rate_min_percent: number;
+  rate_max_percent: number;
+  purposes: Purpose[];
+  features: string[];
+  requirements: string[];
+  extras: Record<string, unknown>;
+  display_order: number;
 }
 
-/** Проверки, которые выполняются по заявке после отправки */
-export const CHECK_SOURCES: SourceId[] = ['egrul', 'fns_tax', 'bki', 'fssp', 'arbitr', 'compliance'];
-
-export type CheckStatus = 'pending' | 'running' | 'ok' | 'warning' | 'waiting' | 'failed';
-
-export interface CheckResult {
-  source: SourceId;
-  status: CheckStatus;
-  /** Краткий итог для банка */
-  summary?: string;
-  requestedAt?: string;
-  answeredAt?: string;
-  attempts: number;
-  /** Совпадение по комплаенсу (реальный результат) — отличается от технической недоступности */
-  match?: boolean;
-}
-
-// ───────── Заявка ─────────
-
-export type AppStatus =
-  | 'DRAFT'
-  | 'SUBMITTED'
-  | 'CHECKS'
-  | 'WAITING_SOURCE'
-  | 'SCORING'
-  | 'MANUAL_REVIEW'
-  | 'DOCS_REQUESTED'
-  | 'DOCS_REVIEW'
-  | 'OFFER'
-  | 'SIGNING'
-  | 'DISBURSEMENT'
-  | 'ACTIVE'
-  | 'REPAID'
-  | 'DECLINED'
-  | 'OFFER_REJECTED'
-  | 'EXPIRED'
-  | 'CANCELLED';
-
-export type Outcome = 'APPROVE' | 'COUNTER_OFFER' | 'REQUEST_DOCS' | 'MANUAL_REVIEW' | 'DECLINE';
-
-export type DataOrigin = 'bank' | 'registry' | 'client' | 'file';
-
-export interface SourcedValue<T> {
-  value: T | null;
-  origin: DataOrigin;
-  /** Источник словами: «ФНС, бухотчётность за 2025» */
-  source: string;
-  asOf?: string;
-}
-
-export interface FileRef {
-  name: string;
-  size: number;
-  type: string;
-  uploadedAt: string;
-}
-
-export type ExtractStatus = 'none' | 'uploading' | 'extracting' | 'check' | 'confirmed' | 'error';
-
-export interface ExtractedField {
-  key: string;
-  label: string;
-  value: string;
-  confirmed: boolean;
-}
-
-export interface Finance {
-  revenueYear: SourcedValue<number>;
-  inflows3m: SourcedValue<number>; // среднемесячные поступления за 3 мес
-  inflowTrendPct: SourcedValue<number>;
-  hasLoans: boolean | null;
-  loanPayments: number | null; // ₽ в месяц
-  guarantor: 'none' | 'owner' | 'third_party';
-  guarantorName: string;
-  comment: string;
-  statement?: { file: FileRef; status: ExtractStatus; fields: ExtractedField[]; error?: string };
-}
-
-export type DocStatus = 'required' | 'uploaded' | 'extracting' | 'check' | 'review' | 'accepted' | 'rejected' | 'expired';
-
-export interface DocRequest {
-  id: string;
-  type: 'bank_statement' | 'tax_return' | 'contract' | 'info';
-  title: string;
-  why: string;
-  requirements: string;
-  formats: string[];
-  maxSizeMb: number;
-  deadline: string;
-  requestedBy: string; // имя сотрудника или «Система»
-  requestedAt: string;
-  comment?: string;
-  status: DocStatus;
-  file?: FileRef;
-  fields: ExtractedField[];
-  extractError?: string;
-  rejectReason?: string;
-  /** Для типа info — текстовый ответ клиента */
-  answer?: string;
-}
-
-export interface ScoreFactor {
-  key: string;
-  name: string;
-  value: string;
-  points: number;
-  max: number;
-  plain: string; // объяснение для клиента
-}
-
-export interface HardStop {
+export interface ReasonCode {
   code: string;
-  text: string;
-  plain: string;
-  triggered: boolean;
+  description: string;
+  feature: string;
+  impact: 'positive' | 'negative' | 'neutral';
+  contribution: number;
+}
+
+export interface DecisionCondition {
+  code: string;
+  description: string;
+  recommended_amount_rub: number;
+}
+
+export interface DecisionResult {
+  decision: Decision;
+  reason_codes: string[];
+  conditions: DecisionCondition[];
 }
 
 export interface ScoringResult {
-  id: string;
-  round: number;
-  at: string;
-  rulesVersion: string;
+  application_id: string;
   score: number;
-  category: 'A' | 'B' | 'C' | 'D' | 'E';
-  hardStops: HardStop[];
-  factors: ScoreFactor[];
-  dscr: number;
-  debtLoadPct: number;
-  monthlyPayment: number;
-  cashFlow: number;
-  currentPayments: number;
-  recommendation: { outcome: Outcome; amount?: number; termMonths?: number; dscrAtAmount?: number; reasonCodes: string[] };
+  pd: number;
+  risk_grade: RiskGrade;
+  reason_codes: ReasonCode[];
+  model_version: string;
+  scored_at?: string | null;
+  decision?: DecisionResult | null;
 }
 
-export interface Fee {
-  name: string;
-  amount: number;
+export interface Egrul {
+  inn: string;
+  ogrn: string;
+  legal_name: string;
+  legal_form: LegalForm;
+  status: string;
+  okved: string;
+  okved_description: string;
+  region: string;
+  registration_date: string;
+  employee_count: number;
+  director: string;
+  address: string;
 }
 
-export interface Offer {
-  id: string;
-  version: number;
-  kind: 'full' | 'counter';
-  product: ProductCode;
-  amount: number;
-  termMonths: number;
-  ratePct: number;
-  monthlyPayment: number; // для овердрафта — 0
-  overpayment: number;
-  fees: Fee[];
-  collateral: string;
-  guarantor: string;
-  validUntil: string;
-  requested: { product: ProductCode; amount: number; termMonths: number };
-  acceptedAt?: string;
-  acceptedBy?: string;
+export interface Fns {
+  inn: string;
+  tax_regime: string;
+  tax_debt_rub: number;
+  disqualified_persons: boolean;
+  mass_address: boolean;
+  mass_director: boolean;
+  reliability_score: number;
+  last_reporting_date: string;
 }
 
-export interface Reason {
-  code: string;
-  bank: string; // формулировка для банка
-  plain: string; // для клиента
+export interface Bki extends CreditHistory {
+  inn: string;
+  credit_score: number;
+  last_update: string;
 }
 
-export interface Decision {
-  id: string;
-  round: number;
-  outcome: Outcome;
-  by: 'system' | 'underwriter' | 'committee';
-  byName: string;
-  at: string;
-  reasons: Reason[];
-  clientText: string;
-  internalComment?: string;
-  rulesVersion: string;
-  advice: string[]; // что можно сделать клиенту
+export interface EnrichedData {
+  egrul?: Egrul | null;
+  fns?: Fns | null;
+  bki?: Bki | null;
 }
 
-export interface Participant {
-  name: string;
-  role: string;
-  status: 'waiting' | 'signed' | 'not_required';
-  at?: string;
-}
-
-export interface Signing {
-  status: 'waiting' | 'signing' | 'signed' | 'error';
-  error?: string;
-  participants: Participant[];
-  signedAt?: string;
-}
-
-export interface Payment {
-  n: number;
-  date: string;
-  amount: number;
-  principal: number;
-  interest: number;
-  status: 'scheduled' | 'paid' | 'overdue';
-}
-
-export interface Loan {
-  product: ProductCode;
-  amount: number; // сумма кредита или лимит
-  used: number; // для овердрафта
-  balance: number;
-  ratePct: number;
-  termMonths: number;
-  schedule: Payment[];
-  account: string;
-}
-
-export interface Disbursement {
-  status: 'preparing' | 'checking' | 'done';
-  attempts: number;
-  operationId: string;
-  doneAt?: string;
-}
-
-export type EventActor = 'client' | 'bank' | 'system' | 'source' | 'ai';
-
-export interface AppEvent {
-  id: string;
-  at: string;
-  actor: EventActor;
-  actorName: string;
-  /** Текст для клиента. Если нет — событие видит только банк */
-  client?: string;
-  /** Текст для банка (журнал) */
-  bank: string;
-  kind?: string;
+export interface ApplicationParams {
+  product_type: ProductType;
+  requested_amount_rub: number;
+  term_months: number;
+  purpose: Purpose;
+  segment: Segment;
+  submitted_at: string;
 }
 
 export interface Application {
-  id: string;
-  number: string;
-  companyId: string;
-  createdBy: string;
-  createdAt: string;
-  updatedAt: string;
-  /** Версия записи — растёт на каждое изменение (оптимистичная блокировка) */
-  version: number;
-  /** Раунд рассмотрения — растёт после новых документов/данных */
-  round: number;
-  product: ProductCode;
-  goal: BusinessGoal;
-  amount: number;
-  termMonths: number;
-  when: 'week' | 'month' | 'browsing';
-  companyConfirmed: 'registry' | 'manual' | null;
-  manualCompanyNote?: string;
-  delegatedToAccountant: boolean;
-  finance: Finance;
-  consents: { bki?: { at: string; by: string }; pd?: { at: string; by: string } };
+  application_id: string;
   status: AppStatus;
-  statusSince: string;
-  /** Какой источник ждём (для WAITING_SOURCE) */
-  waitingFor?: SourceId;
-  submittedBy?: { userId: string; name: string; role: Role; at: string };
-  checks: Partial<Record<SourceId, CheckResult>>;
-  scoring?: ScoringResult;
-  scoringHistory: { id: string; round: number; at: string; score: number; category: string; trigger: string }[];
-  documents: DocRequest[];
-  decision?: Decision;
-  decisionHistory: Decision[];
-  offer?: Offer;
-  signing?: Signing;
-  disbursement?: Disbursement;
-  loan?: Loan;
-  assignee?: { userId: string; name: string; role: BankRole; at: string };
-  committee?: { requestedAt: string; by: string };
-  complianceResolved?: { verdict: 'clear' | 'confirmed'; by: string; at: string };
-  needsRescore?: boolean;
-  events: AppEvent[];
+  created_at: string;
+  updated_at: string;
+  application: ApplicationParams;
+  company: Company;
+  financials: Financials;
+  credit_history: CreditHistory;
+  scoring_result: ScoringResult | null;
+  enriched_data: EnrichedData | null;
+  explanation: string | null;
 }
 
-/** То, что видит конкретный пользователь (сервер фильтрует по роли) */
-export interface ApplicationView extends Application {
-  viewerRole: Role;
-  permissions: Permissions;
-  /** Чувствительные поля для банка (маскируются по роли) */
-  sensitive?: { headPassport: string; headBirth: string };
-  /** Клиенту — только цифры для «запаса прочности», без балла и версии правил */
-  afford?: { cashFlow: number; currentPayments: number };
+export interface ApplicationList {
+  applications: Application[];
+  next_cursor: string | null;
+  previous_cursor: string | null;
 }
 
-export interface Permissions {
-  editDraft: boolean;
-  submit: boolean;
-  uploadDocs: boolean;
-  seeDocuments: boolean;
-  acceptOffer: boolean;
-  sign: boolean;
-  cancel: boolean;
-  // банк
-  takeTask: boolean;
-  requestDocs: boolean;
-  reviewDocs: boolean;
-  decide: boolean;
-  resolveCompliance: boolean;
-  seeScoring: boolean;
+export interface CreateApplicationInput {
+  product_type: ProductType | null;
+  requested_amount_rub: number;
+  term_months: number;
+  purpose: Purpose;
+  segment: Segment;
 }
 
-export interface ApplicationSummary {
-  id: string;
-  number: string;
-  companyId: string;
-  companyName: string;
-  product: ProductCode;
-  amount: number;
-  termMonths: number;
-  status: AppStatus;
-  statusSince: string;
-  updatedAt: string;
-  category?: string;
-  score?: number;
-  assignee?: string;
-  offerAmount?: number;
+export interface AppEvent {
+  id: number;
+  event_type: 'created' | 'enriched' | 'scored' | 'status_changed' | 'failed' | string;
+  payload: Record<string, unknown> | null;
+  created_at: string;
 }
 
-export type TaskType = 'review' | 'documents' | 'compliance' | 'offer' | 'signing' | 'committee';
-
-export interface BankTask {
-  id: string;
-  appId: string;
-  number: string;
-  companyName: string;
-  inn: string;
-  product: ProductCode;
-  amount: number;
-  type: TaskType;
-  role: BankRole;
-  appStatus: AppStatus;
-  createdAt: string;
-  waitingMin: number;
-  priority: 'high' | 'normal';
-  assignee?: string;
-  category?: string;
-  score?: number;
-  /** Может ли текущий пользователь действовать по задаче */
-  actionable: boolean;
+export interface AdminStats {
+  total: number;
+  by_status: Record<string, number>;
+  by_product_type: Record<string, number>;
+  by_risk_grade: Record<string, number>;
+  avg_score: number | null;
 }
 
-// ───────── Главная: шансы ─────────
-
-export type ChanceLevel = 'high' | 'mid' | 'low' | 'blocked' | 'unknown';
-
-export interface ProductChance {
-  product: ProductCode;
-  level: ChanceLevel;
-  /** null — не рассчитано */
-  pct: number | null;
-  approx: boolean;
-  /** Предварительно доступная сумма */
-  limit: number | null;
-  blocker?: string;
-  fits: boolean; // предварительно подходит под задачу
+export interface ModelInfo {
+  model_version: string;
+  model_type: string;
+  trained_at?: string | null;
+  features: string[];
+  metrics: Record<string, number>;
 }
 
-export interface ChanceFactor {
-  key: string;
-  dir: '+' | '-' | '?';
-  name: string;
-  note: string;
-  source: string;
-  asOf?: string;
+export interface Tokens {
+  access_token: string;
+  refresh_token: string;
 }
 
-export interface Recommendation {
-  id: string;
-  title: string;
-  text: string;
-  effect: string;
-  action?: { label: string; kind: 'consent' | 'apply' | 'upload' | 'link'; product?: ProductCode };
-}
-
-export interface ChancesResult {
-  state: 'ready' | 'insufficient' | 'error';
-  calibrated: boolean;
-  bkiConsent: boolean;
-  calculatedAt: string;
-  products: ProductChance[];
-  factors: ChanceFactor[];
-  recommendations: Recommendation[];
-  error?: string;
-}
-
-// ───────── ИИ ─────────
-
-export type AiMode = 'select' | 'free' | 'steps';
-
-export interface AiContext {
-  screen: string; // идентификатор раздела
-  appId?: string;
-  selection?: string;
-}
-
-export interface AiAnswer {
-  ok: boolean;
-  text: string;
-  sources: { name: string; asOf?: string }[];
-  actions?: { label: string; to: string }[];
-  limited?: boolean; // действие/сведения недоступны роли
-  error?: string;
-}
-
-// ───────── Ошибки API ─────────
+/** Сообщения WebSocket /ws/applications (USERFLOW §8) */
+export type WsMessage =
+  | { type: 'status_changed'; application_id: string; status: AppStatus; payload: Record<string, unknown> | null; created_at: string }
+  | { type: 'event'; application_id: string; event_type: string; payload: Record<string, unknown> | null; created_at: string };
 
 export class ApiError extends Error {
-  code: string;
-  retryable: boolean;
-  constructor(code: string, message: string, retryable = false) {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
     super(message);
-    this.code = code;
-    this.retryable = retryable;
   }
-}
-
-export interface DraftInput {
-  product: ProductCode;
-  goal: BusinessGoal;
-  amount: number;
-  termMonths: number;
-  when: Application['when'];
-}
-
-export interface DecisionInput {
-  outcome: 'APPROVE' | 'COUNTER_OFFER' | 'REQUEST_DOCS' | 'DECLINE';
-  amount?: number;
-  termMonths?: number;
-  product?: ProductCode;
-  reasons: string[];
-  clientText: string;
-  internalComment: string;
-  doc?: { type: DocRequest['type']; title: string; why: string; deadline: string; comment: string };
-  aiTextChecked: boolean;
-}
-
-export interface DocRequestInput {
-  type: DocRequest['type'];
-  title: string;
-  why: string;
-  deadline: string;
-  comment: string;
-}
-
-export interface SimLogEntry {
-  id: string;
-  at: string;
-  text: string;
-  source?: SourceId;
-  appId?: string;
-}
-
-export interface DemoAccounts {
-  companies: Company[];
-  users: User[];
 }
