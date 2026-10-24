@@ -21,6 +21,7 @@ from router.mock import router as mock_router
 from router.products import router as products_router
 from router.scoring import router as scoring_router
 from router.ws import router as ws_router
+from router.admin import router as admin_router
 
 
 
@@ -94,6 +95,8 @@ def custom_openapi():
         ("/applications/{application_id}/events", "get"): [{"Bearer": []}],
         ("/scoring/batch", "post"): [{"Bearer": []}],
         ("/scoring/model-info", "get"): [{"Bearer": []}],
+        ("/admin/applications", "get"): [{"Bearer": []}],
+        ("/admin/stats/overview", "get"): [{"Bearer": []}],
     }
     
     for (path, method), security in secured_paths.items():
@@ -125,6 +128,7 @@ app.include_router(products_router)
 app.include_router(mock_router)
 app.include_router(applications_router)
 app.include_router(ws_router)
+app.include_router(admin_router)
 
 
 if __name__ == "__main__":
