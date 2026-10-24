@@ -1,0 +1,39 @@
+{
+  "name": "alfa-credit-cabinet-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@alfalab/core-components-amount-input": "^9.4.0",
+    "@alfalab/core-components-button": "^13.2.4",
+    "@alfalab/core-components-checkbox": "^6.3.2",
+    "@alfalab/core-components-config": "^1.1.0",
+    "@alfalab/core-components-input": "^17.2.2",
+    "@alfalab/core-components-radio": "^6.1.2",
+    "@alfalab/core-components-select": "^19.2.11",
+    "@alfalab/core-components-slider-input": "^11.1.10",
+    "@alfalab/core-components-spinner": "^6.0.9",
+    "@alfalab/core-components-stack-context": "^1.0.1",
+    "@alfalab/core-components-switch": "^6.2.3",
+    "@alfalab/core-components-vars": "^11.4.1",
+    "@fontsource/onest": "^5.1.1",
+    "@fontsource/unbounded": "^5.1.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0",
+    "zustand": "^4.5.5"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}

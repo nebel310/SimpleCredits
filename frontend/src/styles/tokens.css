@@ -1,0 +1,46 @@
+/* Токены: основа — @alfalab/core-components (тема bluetint), наш слой — лайм, фиолетовый ИИ, пиксели */
+:root {
+  /* Альфа (core-components) */
+  --c-red: var(--color-light-accent-primary, #ef3124);
+  --c-red-press: var(--color-light-accent-primary-press, #d72505);
+  --c-black: var(--color-light-accent-secondary, #212124);
+  --c-text: var(--color-light-text-primary, rgba(3, 3, 6, 0.88));
+  --c-text-2: var(--color-light-text-secondary, rgba(4, 4, 19, 0.55));
+  --c-text-3: var(--color-light-text-tertiary, rgba(5, 8, 29, 0.38));
+  --c-bg: var(--color-light-neutral-100, #f2f3f5);
+  --c-white: #ffffff;
+  --c-line: var(--color-light-neutral-300, #e7e8eb);
+  --c-border: var(--color-light-neutral-400, #d2d3d9);
+  --c-gray: var(--color-light-neutral-700, #898991);
+  --c-positive: var(--color-light-text-positive, #0d9336);
+  --c-negative: var(--color-light-status-negative, #ff4837);
+  --c-negative-soft: var(--color-light-status-muted-negative, #ffebeb);
+  --c-negative-ink: var(--color-light-text-negative-press, #a6201e);
+  --c-attention: var(--color-light-status-attention, #fa9313);
+  --c-attention-soft: var(--color-light-status-muted-attention, #ffefd9);
+
+  /* Наш слой: «Альфа Будущее» */
+  --c-lime: #c6f432;
+  --c-lime-soft: #d9f77a;
+  --c-lime-ink: #1e3300;
+  --c-high: #9ed400;
+  --c-mid: #8c3bff;
+  --c-mid-soft: #ebddff;
+  --c-mid-ink: #4b1a9e;
+  --c-ai: #6a2bd9;
+  --c-ai-bg: #f4efff;
+  --c-ai-ink: #3b1585;
+  --c-ai-line: #d8ccf2;
+
+  --f-display: 'Unbounded', 'Onest', system-ui, sans-serif;
+  --f-text: 'Onest', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  --r-card: 24px;
+  --r-hero: 28px;
+  --r-btn: 14px;
+  --r-field: 12px;
+  --r-panel: 16px;
+
+  --wrap: 1280px;
+  --gutter: 40px;
+}
