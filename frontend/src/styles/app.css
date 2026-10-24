@@ -43,8 +43,8 @@ h1, h2, h3 { margin: 0; font-family: var(--f-display); font-weight: 600; line-he
 .hdr { background: var(--c-white); }
 .hdr-in { min-height: 76px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 28px; }
 .hdr.dark { background: var(--c-black); color: #fff; }
+.logo-mark { display: block; flex: none; }
 .brand { display: flex; align-items: center; gap: 12px; font-family: var(--f-display); font-size: 15px; font-weight: 600; text-decoration: none; color: inherit; }
-.logo-slot { width: 40px; height: 40px; flex: none; display: flex; align-items: center; justify-content: center; border: 1.5px dashed var(--c-gray); border-radius: 8px; font: 700 9px/1 var(--f-text); letter-spacing: 0.06em; color: var(--c-gray); }
 .nav { display: flex; gap: 6px; flex-wrap: wrap; }
 .nav a { display: flex; align-items: center; min-height: 44px; padding: 0 16px; border-radius: 999px; text-decoration: none; color: var(--c-text-2); }
 .nav a:hover { color: var(--c-text); background: var(--c-bg); }

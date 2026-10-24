@@ -2,15 +2,7 @@ import { type ReactNode } from 'react';
 import { Link, NavLink, Navigate, useNavigate } from 'react-router-dom';
 import { useSession } from '../api';
 import { signOut } from '../lib/auth';
-
-function LogoSlot() {
-  // Место под официальный логотип банка: файл вставляет команда (организаторы разрешили)
-  return (
-    <span className="logo-slot" title="Место для официального логотипа">
-      ЛОГО
-    </span>
-  );
-}
+import { LogoMark } from '../ui/Logo';
 
 function Who({ title, sub }: { title: string; sub: string }) {
   const nav = useNavigate();
@@ -40,7 +32,7 @@ export function ClientLayout({ children }: { children: ReactNode }) {
       <header className="hdr">
         <div className="wrap hdr-in">
           <Link to="/home" className="brand">
-            <LogoSlot />
+            <LogoMark />
             <span>Кредитный кабинет</span>
           </Link>
           <nav className="nav" aria-label="Разделы кабинета">
@@ -72,7 +64,7 @@ export function BankLayout({ children }: { children: ReactNode }) {
       <header className="hdr dark">
         <div className="wrap hdr-in">
           <Link to="/bank" className="brand">
-            <LogoSlot />
+            <LogoMark />
             <span>Кабинет банка</span>
           </Link>
           <nav className="nav" aria-label="Разделы банка">

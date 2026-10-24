@@ -6,6 +6,7 @@ import { signIn, signInAdmin, signInDemo, signUp } from '../lib/auth';
 import { DEMO_ADMIN, DEMO_COMPANIES, type DemoCompany } from '../lib/demo';
 import { Btn, Chip, ErrorState, TextField } from '../ui/kit';
 import { Px } from '../ui/Px';
+import { LogoMark } from '../ui/Logo';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -53,7 +54,7 @@ export function Login() {
     <main className="wrap page-main" id="main">
       <div className="row-c between">
         <div className="brand">
-          <span className="logo-slot">ЛОГО</span>
+          <LogoMark />
           <span>Кредитный кабинет</span>
         </div>
         <span className="proto">Прототип · данные синтетические</span>
