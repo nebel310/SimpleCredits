@@ -72,11 +72,20 @@ npm run dev               # http://localhost:5173, /api → http://localhost:300
 | Кабинет банка | `#/bank` | `GET /admin/applications`, `/admin/stats/overview`, `/scoring/model-info` |
 | Заявка глазами банка | `#/bank/applications/:id` | `GET /applications/{id}`, `/applications/{id}/events` |
 
-Подробно — в `docs/api-contract.md`, статусы — в `docs/state-diagram.md`, экраны — в `docs/screens.md`.
+Подробно — в `docs/api-contract.md`, статусы — в `docs/state-diagram.md`, экраны — в `docs/screens.md`, тестирование — в `docs/testing.md`.
 
 ## Чего нет (по USERFLOW §11)
 
 Мастера с черновиками, офферов с принятием, запроса документов, подписания, выдачи, графика платежей, ролей бухгалтера и наблюдателя, ручного андеррайтинга. Фронтенд показывает только то, что умеет бэкенд. Прошлая версия с этими экранами на моках осталась в истории ветки `frontend`.
+
+## Тесты
+
+```bash
+npm test                 # 56 юнит-тестов, бэкенд не нужен
+npm run test:e2e         # 24 e2e-сценария против запущенного стека (по умолчанию http://localhost:5500)
+```
+
+Что покрыто, что найдено и исправлено — `docs/testing.md`. Проверка скоринговой модели на реалистичных данных — `docs/model-check.md` и `scripts/model-check.py`.
 
 ## Структура
 
@@ -95,6 +104,8 @@ src/
   pages/shared/   карточка заявки (общая для клиента и банка)
   ui/             компоненты на @alfalab/core-components, пиксельные иконки
   styles/         токены и стили
+e2e/              сценарии Playwright
+scripts/          проверка скоринговой модели
 ```
 
 ## Дизайн-система
