@@ -8,7 +8,7 @@
 |---|---|---|
 | React, React DOM 18 | MIT | UI |
 | React Router 6 | MIT | маршрутизация |
-| Zustand 4 | MIT | состояние сессии, ИИ-помощника, уведомлений |
+| Zustand 4 | MIT | состояние сессии и уведомлений |
 | @alfalab/core-components (button, input, select, checkbox, radio, switch и зависимости) | MIT | компоненты и токены дизайн-системы Альфа-Банка, github.com/core-ds/core-components; использование согласовано с организаторами |
 | Onest, Unbounded через @fontsource | SIL Open Font License 1.1 | шрифты, подключены локально |
 | Vite, @vitejs/plugin-react | MIT | сборка (только разработка) |

@@ -1,73 +1,66 @@
-# Контракт API для бэкенда
+# Как фронтенд работает с API бэкенда
 
-Типы запросов и ответов — в `src/api/types.ts`, интерфейс — в `src/api/client.ts`, HTTP-реализация — в `src/api/http.ts`. Базовый путь `VITE_API_URL` (по умолчанию `/api`).
+Источник правды — `backend/webdoc.yaml`, `backend/README.md` и `USERFLOW.md`. Типы фронтенда (`src/api/types.ts`) повторяют Pydantic-схемы бэкенда без переименований. Все вызовы собраны в `src/api/index.ts`.
 
-## Общие правила
+## Общее
 
-- Пользователь демо-входа передаётся заголовком `X-Demo-User: <userId>`. Роль и компанию сервер определяет сам.
-- Действия, которые нельзя выполнить дважды, приходят с заголовком `Idempotency-Key`. Повтор с тем же ключом возвращает текущее состояние без второго действия.
-- Ответ на любое действие с заявкой — полный `ApplicationView` (заявка, отфильтрованная по роли, плюс `permissions`).
-- Ошибка: HTTP 4xx/5xx и тело `{ "code": string, "message": string, "retryable": boolean }`. `message` показывается пользователю как есть, поэтому пишется простыми словами.
-- Клиенту не отдаются: `scoring` (балл, категория, версия правил), `internalComment`, `assignee`, события без текста для клиента. Вместо скоринга — `afford: { cashFlow, currentPayments }` для «запаса прочности».
-- Наблюдателю не отдаются файлы и поля документов.
-- Чувствительные данные (`sensitive`) маскируются: полностью видят андеррайтер и комплаенс.
+- Базовый адрес — `VITE_API_URL` (по умолчанию `/api`). В разработке его проксирует Vite, в Docker — nginx: `/api/x` → `http://backend:3001/x`.
+- Защищённые запросы идут с `Authorization: Bearer <access_token>`.
+- Ошибка бэкенда `{"detail": "..."}` показывается пользователю как есть. Ошибки валидации FastAPI (422, `detail` — массив) превращаются в «Проверьте поля: …».
+- 401 → `POST /auth/refresh?refresh_token=…` → запрос повторяется один раз. Для демо-аккаунта, если refresh не сработал, фронтенд входит заново тем же логином. Иначе — выход на экран входа.
+- Сессия хранится в `sessionStorage`: в разных вкладках можно войти под разными аккаунтами.
 
 ## Эндпоинты
 
-| Метод | Путь | Тело | Ответ | Кто |
-|---|---|---|---|---|
-| GET | `/demo/accounts` | — | `DemoAccounts` | все |
-| GET | `/me` | — | `User` | все |
-| GET | `/products` | — | `Product[]` | все |
-| GET | `/companies/:id` | — | `Company` | клиент своей компании, банк |
-| GET | `/companies/:id/chances?refresh=1` | — | `ChancesResult` (`state`: ready, insufficient, error) | клиент |
-| POST | `/companies/:id/consents/bki` | — | 204 | владелец |
-| GET | `/applications` | — | `ApplicationSummary[]` | клиент |
-| GET | `/applications/:id` | — | `ApplicationView` | клиент своей компании, банк |
-| POST | `/applications` | `DraftInput` | `ApplicationView` (черновик; один на компанию) | владелец, бухгалтер |
-| PATCH | `/applications/:id` | `Partial<DraftInput> & { finance?, delegatedToAccountant? }` | `ApplicationView` | владелец, бухгалтер; только DRAFT |
-| POST | `/applications/:id/company/lookup` | `{ inn }` | `LookupResult` (`found`, `not_found`, `unavailable`, `invalid`) | клиент |
-| POST | `/applications/:id/company/confirm` | `{ how: 'registry' \| 'manual', note? }` | `ApplicationView` | клиент |
-| POST | `/applications/:id/statement` | `FileInput` (в проде multipart) | `ApplicationView` (`statement.status = extracting`) | клиент |
-| POST | `/applications/:id/statement/confirm` | `{ fields: ExtractedField[] }` | `ApplicationView` | клиент |
-| DELETE | `/applications/:id/statement` | — | `ApplicationView` | клиент |
-| POST | `/applications/:id/consents` | — | `ApplicationView` | владелец |
-| POST | `/applications/:id/submit` | — + `Idempotency-Key` | `ApplicationView` | владелец |
-| POST | `/applications/:id/cancel` | — + `Idempotency-Key` | `ApplicationView` | владелец, до решения |
-| POST | `/applications/:id/documents/:docId/file` | `FileInput` | `ApplicationView` | владелец, бухгалтер |
-| POST | `/applications/:id/documents/:docId/confirm` | `{ fields }` | `ApplicationView` | владелец, бухгалтер |
-| POST | `/applications/:id/documents/:docId/answer` | `{ answer }` | `ApplicationView` | владелец, бухгалтер |
-| POST | `/applications/:id/documents/send` | — + `Idempotency-Key` | `ApplicationView` (→ DOCS_REVIEW) | владелец, бухгалтер |
-| POST | `/applications/:id/offer/accept` | `{ offerId, version }` + `Idempotency-Key` | `ApplicationView` (→ SIGNING) | владелец |
-| POST | `/applications/:id/offer/reject` | `{ offerId }` + `Idempotency-Key` | `ApplicationView` | владелец |
-| POST | `/applications/:id/sign` | — + `Idempotency-Key` | `ApplicationView` (`signing.status = signing`) | владелец |
-| GET | `/bank/tasks` | — | `BankTask[]` (`actionable` — для роли текущего пользователя) | банк |
-| GET | `/bank/applications` | — | `ApplicationSummary[]` | банк |
-| POST | `/bank/applications/:id/take` | — + `Idempotency-Key` | `ApplicationView` (запись в журнал) | роль задачи |
-| POST | `/bank/applications/:id/document-requests` | `DocRequestInput` + `Idempotency-Key` | `ApplicationView` (→ DOCS_REQUESTED) | менеджер, андеррайтер |
-| POST | `/bank/applications/:id/documents/:docId/review` | `{ verdict: 'accept' \| 'reject', reason }` | `ApplicationView` (все приняты → новый раунд, SCORING) | менеджер, взявший задачу |
-| POST | `/bank/applications/:id/compliance` | `{ verdict: 'clear' \| 'confirmed', comment }` | `ApplicationView` | комплаенс |
-| POST | `/bank/applications/:id/escalate` | — | `ApplicationView` (кредитный комитет) | андеррайтер |
-| POST | `/bank/applications/:id/decision` | `DecisionInput` + `Idempotency-Key` | `ApplicationView` | андеррайтер, взявший задачу |
-| POST | `/bank/applications/:id/checks/rerun` | — | `ApplicationView` | менеджер, андеррайтер |
-| POST | `/bank/applications/:id/decision/draft-text` | `{ outcome, reasons, amount }` | `{ text }` | андеррайтер |
-| POST | `/ai/ask` | `{ ctx: AiContext, question }` | `AiAnswer` | все |
-| GET | `/demo/sources` | — | `SourceState[]` (с `affected`) | демо |
-| PATCH | `/demo/sources/:id` | `{ enabled?, mode? }` | `SourceState[]` | демо |
-| GET | `/demo/log` | — | `SimLogEntry[]` | демо |
-| POST | `/demo/scenarios/:name` | — | `{ applicationId }` | демо |
-| POST | `/demo/reset` | — | 204 | демо |
+| Метод | Путь | Где используется |
+|---|---|---|
+| POST | `/auth/register` | Регистрация, первый вход демо-аккаунта |
+| POST | `/auth/login` | Вход, демо-вход, вход администратора |
+| POST | `/auth/refresh` | Продление сессии при 401 |
+| POST | `/auth/logout` | Кнопка «выйти» в шапке |
+| GET | `/auth/me` | После входа |
+| PATCH | `/auth/me` | Профиль компании; демо-профиль при первом входе |
+| GET | `/products` | Каталог, форма заявки, названия продуктов |
+| POST | `/applications` | Новая заявка. Ответ 201 уже содержит итоговый статус |
+| GET | `/applications` | Главная и «Мои заявки» (все страницы, новые сверху) |
+| GET | `/applications/{id}` | Карточка заявки |
+| GET | `/applications/{id}/events` | История заявки и трекер этапов |
+| GET | `/admin/applications` | Кабинет банка: все заявки |
+| GET | `/admin/stats/overview` | Кабинет банка: статистика |
+| GET | `/scoring/model-info` | Кабинет банка: версия и метрики модели |
+| GET | `/mock/egrul/{inn}` | Профиль: «Найти в ЕГРЮЛ» — подставить реквизиты |
+| GET | `/mock/fns/{inn}` | Профиль: справка ФНС рядом с реквизитами |
+| GET | `/mock/bki/{inn}` | Профиль: «Запросить в БКИ» — подставить кредитную историю |
+| WS | `/ws/applications?token=…` | Живые обновления статуса и событий |
 
-`question = "__steps__"` в `/ai/ask` — режим «что делать дальше».
+Не используются: `/auth/users`, `/files/*`, `/scoring/batch`, `/products/{code}` — в пути пользователя по USERFLOW они не нужны.
 
-## Проверки на сервере для решения андеррайтера
+## Создание заявки
 
-- Статус `MANUAL_REVIEW`, заявка взята этим пользователем, комплаенс закрыт, все внешние проверки ответили.
-- Одно решение на раунд рассмотрения (`round`). Новое — только после новых данных.
-- Для одобрения и встречного: сумма и срок в границах продукта, DSCR ≥ 1,3, сумма ≤ лимита полномочий или заявка на кредитном комитете.
-- Для запроса документов: что нужно, зачем, срок. Для отказа: хотя бы одна причина из справочника `REASON_CATALOG`.
-- `aiTextChecked = true` — сотрудник подтвердил текст для клиента. ИИ не меняет исход и условия.
+```json
+POST /applications
+{ "product_type": "term_loan" | null, "requested_amount_rub": 3000000, "term_months": 12, "purpose": "working_capital", "segment": "small" }
+```
 
-## Обновления
+- `product_type: null` — пользователь выбрал «Подобрать за меня».
+- Профиль должен быть заполнен (иначе 400 «Профиль компании не заполнен…») — фронтенд сначала отправляет на `#/profile`.
+- 502/504 — ML недоступен: заявка сохранена со статусом `failed`, фронтенд пишет об этом и предлагает отправить ещё раз.
+- Пока запрос идёт, этапы на экране двигаются по событиям WebSocket (`enriched`, `status_changed`).
 
-Сейчас HTTP-клиент опрашивает данные раз в 3 секунды. Для мгновенного обновления можно добавить SSE `GET /events?applicationId=…` — фронтенд перечитает данные по событию.
+## Статус → что видит пользователь
+
+| `status` | `decision` | Заголовок |
+|---|---|---|
+| `confirmed` | `approve` | Заявка одобрена |
+| `different` | `approve_with_conditions` | Можем одобрить на других условиях + рекомендуемая сумма и кнопка повторной заявки на неё |
+| `different` | `manual_review` | Автоматического решения нет (пограничная зона риска) |
+| `different` | `approve` | Одобрено — продукт подобрали за вас |
+| `declined` | `decline` | Банк отказал + причины политики |
+| `failed` | — | Не удалось получить решение |
+| `pending` | — | Заявка обрабатывается (фронтенд дополнительно опрашивает заявку раз в 2 с) |
+
+Коды политики ML (`CURRENT_PAST_DUE`, `HIGH_RISK_SCORE`, `RISK_IN_GREY_ZONE` и др.) переводятся в `src/lib/labels.ts`. Факторы `reason_codes` показываются с описанием от модели и долей вклада.
+
+## WebSocket
+
+Одно соединение на вкладку, пока пользователь вошёл. При закрытии — переподключение через 1–5 с; при коде `4401` — продление сессии и переподключение с новым токеном. После переподключения экраны перечитывают заявку и `/events` (USERFLOW §8). Администратору бэкенд события чужих заявок не шлёт, поэтому кабинет банка обновляется раз в 15 секунд.
