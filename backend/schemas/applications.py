@@ -11,7 +11,7 @@ LegalForm = Literal["llc", "individual_entrepreneur", "joint_stock_company"]
 RiskGrade = Literal["A", "B", "C", "D", "E"]
 Decision = Literal["approve", "approve_with_conditions", "manual_review", "decline"]
 ReasonImpact = Literal["positive", "negative", "neutral"]
-ApplicationStatus = Literal["pending", "scored", "failed"]
+ApplicationStatus = Literal["pending", "failed", "confirmed", "different", "declined"]
 
 DEFAULT_PRODUCT_TYPE: ProductType = "term_loan"
 

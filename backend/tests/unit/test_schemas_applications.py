@@ -82,7 +82,7 @@ def make_application_orm():
     now = datetime.now(timezone.utc)
     return SimpleNamespace(
         application_id="abc123",
-        status="scored",
+        status="pending",
         created_at=now,
         updated_at=now,
         product_type="term_loan",
@@ -279,7 +279,7 @@ def test_orm_to_schema_without_result():
     """Собирает заявку без результата скоринга"""
     detail = application_orm_to_schema(make_application_orm())
     assert detail.application_id == "abc123"
-    assert detail.status == "scored"
+    assert detail.status == "pending"
     assert detail.scoring_result is None
     assert detail.enriched_data is None
     assert detail.explanation is None

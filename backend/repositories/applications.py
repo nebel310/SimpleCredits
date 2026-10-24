@@ -12,17 +12,23 @@ class ApplicationRepository:
     """Репозиторий для работы с кредитными заявками и их событиями"""
 
     @classmethod
-    async def create(cls, user_id: int, data: SScoreApplicationRequest) -> ApplicationOrm:
+    async def create(
+        cls,
+        user_id: int,
+        data: SScoreApplicationRequest,
+        product_type: str | None = None,
+    ) -> ApplicationOrm:
         """Создаёт заявку со снимком профиля и пишет событие created"""
         application_id = uuid.uuid4().hex
         now = datetime.now(timezone.utc)
+        actual_product_type = product_type if product_type is not None else data.application.product_type
 
         async with new_session() as session:
             application = ApplicationOrm(
                 application_id=application_id,
                 user_id=user_id,
                 status="pending",
-                product_type=data.application.product_type,
+                product_type=actual_product_type,
                 requested_amount_rub=data.application.requested_amount_rub,
                 term_months=data.application.term_months,
                 purpose=data.application.purpose,
@@ -244,3 +250,25 @@ class ApplicationRepository:
                 raise ValueError("Invalid direction")
 
             return rows, next_id, prev_id
+    
+    @classmethod
+    async def save_enriched(cls, application_id: str, enriched_data: dict) -> None:
+        """Сохраняет enriched_data и пишет событие enriched"""
+        now = datetime.now(timezone.utc)
+        sources = [k for k, v in enriched_data.items() if v is not None]
+
+        async with new_session() as session:
+            await session.execute(
+                update(ApplicationOrm)
+                .where(ApplicationOrm.application_id == application_id)
+                .values(enriched_data=enriched_data, updated_at=now)
+            )
+            session.add(
+                ApplicationEventOrm(
+                    application_id=application_id,
+                    event_type="enriched",
+                    payload={"sources": sources},
+                    created_at=now,
+                )
+            )
+            await session.commit()

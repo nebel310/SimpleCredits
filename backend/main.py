@@ -1,8 +1,6 @@
 import os
 
 import uvicorn
-from ml_grpc.client import ScoringClient
-from router.scoring import router as scoring_router
 
 from contextlib import asynccontextmanager
 
@@ -12,13 +10,16 @@ from fastapi.openapi.utils import get_openapi
 
 from database import create_tables
 from database import delete_tables
+from minio.client import s3_client
+from ml_grpc.client import ScoringClient
+from repositories.auth import UserRepository
+from repositories.products import ProductRepository
+from router.applications import router as applications_router
 from router.auth import router as auth_router
 from router.files import router as file_router
-from repositories.auth import UserRepository
-from minio.client import s3_client
-from repositories.products import ProductRepository
-from router.products import router as products_router
 from router.mock import router as mock_router
+from router.products import router as products_router
+from router.scoring import router as scoring_router
 
 
 
@@ -86,9 +87,10 @@ def custom_openapi():
         ("/files/{file_id}", "get"): [{"Bearer": []}],
         ("/files/{file_id}/info", "get"): [{"Bearer": []}],
         ("/files/{file_id}", "delete"): [{"Bearer": []}],
-        ("/scoring/applications", "post"): [{"Bearer": []}],
-        ("/scoring/applications", "get"): [{"Bearer": []}],
-        ("/scoring/applications/{application_id}", "get"): [{"Bearer": []}],
+        ("/applications", "post"): [{"Bearer": []}],
+        ("/applications", "get"): [{"Bearer": []}],
+        ("/applications/{application_id}", "get"): [{"Bearer": []}],
+        ("/applications/{application_id}/events", "get"): [{"Bearer": []}],
         ("/scoring/batch", "post"): [{"Bearer": []}],
         ("/scoring/model-info", "get"): [{"Bearer": []}],
     }
@@ -102,12 +104,8 @@ def custom_openapi():
     return app.openapi_schema
 
 
-
-
 app = FastAPI(lifespan=lifespan)
 app.openapi = custom_openapi
-
-
 
 
 app.add_middleware(
@@ -119,12 +117,12 @@ app.add_middleware(
 )
 
 
-
-
 app.include_router(auth_router)
 app.include_router(file_router)
 app.include_router(scoring_router)
+app.include_router(products_router)
 app.include_router(mock_router)
+app.include_router(applications_router)
 
 
 if __name__ == "__main__":

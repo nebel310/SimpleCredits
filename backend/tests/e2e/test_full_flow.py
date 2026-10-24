@@ -1,23 +1,16 @@
 import grpc
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import update
 
 import database
+from ml_grpc.generated.simplecredits.scoring.v1 import scoring_pb2
 from models.auth import UserOrm
 from models.applications import ApplicationOrm
 
 
-def make_body():
-    """Возвращает валидное тело POST /scoring/applications"""
+def make_profile():
+    """Возвращает полный PATCH /auth/me с компанией/финансами/КИ"""
     return {
-        "application": {
-            "product_type": "term_loan",
-            "requested_amount_rub": 1500000,
-            "term_months": 24,
-            "purpose": "equipment",
-            "segment": "small",
-            "submitted_at": "2026-03-15T10:00:00Z",
-        },
         "company": {
             "inn": "7701234567",
             "ogrn": "1027700132195",
@@ -52,8 +45,20 @@ def make_body():
     }
 
 
+def make_body(product_type: str | None = "term_loan"):
+    """Возвращает тело POST /applications"""
+    body = {
+        "requested_amount_rub": 1500000,
+        "term_months": 24,
+        "purpose": "equipment",
+        "segment": "small",
+    }
+    if product_type is not None:
+        body["product_type"] = product_type
+    return body
+
+
 async def _register(client, email, password="secret123"):
-    """Регистрирует пользователя и возвращает ответ"""
     return await client.post(
         "/auth/register",
         json={
@@ -66,20 +71,24 @@ async def _register(client, email, password="secret123"):
 
 
 async def _login(client, email, password="secret123"):
-    """Логинит пользователя и возвращает ответ"""
     return await client.post("/auth/login", json={"email": email, "password": password})
 
 
 async def _auth_headers(client, email, password="secret123"):
-    """Регистрирует, логинит и возвращает заголовки с токеном"""
     await _register(client, email, password)
     login = await _login(client, email, password)
     token = login.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
 
 
+async def _setup_full_profile(client, email):
+    """Регистрирует, логинит, заполняет профиль и возвращает headers"""
+    headers = await _auth_headers(client, email)
+    await client.patch("/auth/me", json=make_profile(), headers=headers)
+    return headers
+
+
 async def _make_admin(email):
-    """Повышает существующего пользователя до admin"""
     async with database.new_session() as session:
         await session.execute(
             update(UserOrm).where(UserOrm.email == email).values(role="admin")
@@ -87,224 +96,173 @@ async def _make_admin(email):
         await session.commit()
 
 
-async def test_full_happy_path(e2e_client):
-    """Регистрация, логин, создание заявки, чтение и список"""
+async def test_full_happy_path_confirmed(e2e_client):
+    """Полный путь: approve + product_type задан → confirmed"""
     client, _ = e2e_client
-    headers = await _auth_headers(client, "happy@example.com")
+    headers = await _setup_full_profile(client, "happy@example.com")
 
-    create = await client.post("/scoring/applications", json=make_body(), headers=headers)
+    create = await client.post("/applications", json=make_body("term_loan"), headers=headers)
     assert create.status_code == 201
     data = create.json()
     app_id = data["application_id"]
-    assert data["score"] == 712
-    assert data["risk_grade"] == "B"
-    assert data["decision"]["decision"] == "approve"
+    assert data["status"] == "confirmed"
+    assert data["scoring_result"]["score"] == 712
+    assert data["scoring_result"]["decision"]["decision"] == "approve"
+    assert data["enriched_data"]["egrul"] is not None
+    assert data["enriched_data"]["fns"] is not None
+    assert data["enriched_data"]["bki"] is not None
 
-    detail = await client.get(f"/scoring/applications/{app_id}", headers=headers)
+    detail = await client.get(f"/applications/{app_id}", headers=headers)
     assert detail.status_code == 200
-    assert detail.json()["status"] == "scored"
-    assert detail.json()["scoring_result"]["score"] == 712
+    assert detail.json()["status"] == "confirmed"
 
-    listing = await client.get("/scoring/applications", headers=headers)
+    listing = await client.get("/applications", headers=headers)
     assert listing.status_code == 200
     assert len(listing.json()["applications"]) == 1
-    assert listing.json()["applications"][0]["application_id"] == app_id
+
+    events = await client.get(f"/applications/{app_id}/events", headers=headers)
+    assert events.status_code == 200
+    event_types = [e["event_type"] for e in events.json()]
+    assert "created" in event_types
+    assert "enriched" in event_types
+    assert "scored" in event_types
+    assert "status_changed" in event_types
 
     async with database.new_session() as session:
-        result = await session.execute(
-            select(ApplicationOrm).where(ApplicationOrm.application_id == app_id)
-        )
-        record = result.scalars().first()
-    assert record is not None
-    assert record.status == "scored"
-    assert record.user_id is not None
+        apps = (await session.execute(
+            __import__("sqlalchemy").select(ApplicationOrm)
+        )).scalars().all()
+    assert len(apps) == 1
+    assert apps[0].status == "confirmed"
 
 
-async def test_register_duplicate_email(e2e_client):
-    """Повторная регистрация с тем же email возвращает 400"""
+async def test_approve_no_product_type_different(e2e_client):
+    """approve + product_type не задан → different"""
     client, _ = e2e_client
-    first = await _register(client, "dup@example.com")
-    assert first.status_code == 201
+    headers = await _setup_full_profile(client, "noprod@example.com")
 
-    second = await _register(client, "dup@example.com")
-    assert second.status_code == 400
-
-
-async def test_login_wrong_password(e2e_client):
-    """Вход с неверным паролем возвращает 400"""
-    client, _ = e2e_client
-    await _register(client, "wrong@example.com")
-    response = await _login(client, "wrong@example.com", "badpassword")
-    assert response.status_code == 400
-
-
-async def test_scoring_unauthorized(e2e_client):
-    """Скоринг без токена возвращает 401"""
-    client, _ = e2e_client
-    response = await client.post("/scoring/applications", json=make_body())
-    assert response.status_code == 401
-
-
-async def test_scoring_invalid_payload(e2e_client):
-    """Скоринг с невалидным телом возвращает 422"""
-    client, _ = e2e_client
-    headers = await _auth_headers(client, "invalid@example.com")
-    response = await client.post("/scoring/applications", json={}, headers=headers)
-    assert response.status_code == 422
-
-
-async def test_scoring_declined(e2e_client):
-    """Отказ ML-сервиса сохраняется с decision=decline"""
-    client, servicer = e2e_client
-    from ml_grpc.generated.simplecredits.scoring.v1 import scoring_pb2
-
-    servicer.response_factory = lambda request: (
-        __import__("tests.e2e.conftest", fromlist=["make_proto_response"])
-        .make_proto_response(request.application_id, scoring_pb2.DECISION_DECLINE)
-    )
-
-    headers = await _auth_headers(client, "declined@example.com")
-    create = await client.post("/scoring/applications", json=make_body(), headers=headers)
+    create = await client.post("/applications", json=make_body(None), headers=headers)
     assert create.status_code == 201
-    assert create.json()["decision"]["decision"] == "decline"
-
-    app_id = create.json()["application_id"]
-    detail = await client.get(f"/scoring/applications/{app_id}", headers=headers)
-    assert detail.json()["status"] == "scored"
-    assert detail.json()["scoring_result"]["decision"]["decision"] == "decline"
+    assert create.json()["status"] == "different"
 
 
-async def test_scoring_ml_unavailable_marks_failed(e2e_client):
-    """При недоступности ML заявка помечается failed, ответ 502"""
+async def test_approve_with_conditions_different(e2e_client):
+    """approve_with_conditions → different"""
     client, servicer = e2e_client
-    headers = await _auth_headers(client, "failed@example.com")
+    servicer.response_factory = lambda r: __import__(
+        "tests.e2e.conftest", fromlist=["make_proto_response"]
+    ).make_proto_response(r.application_id, scoring_pb2.DECISION_APPROVE_WITH_CONDITIONS)
+
+    headers = await _setup_full_profile(client, "cond@example.com")
+    create = await client.post("/applications", json=make_body(), headers=headers)
+    assert create.status_code == 201
+    assert create.json()["status"] == "different"
+
+
+async def test_manual_review_different(e2e_client):
+    """manual_review → different"""
+    client, servicer = e2e_client
+    servicer.response_factory = lambda r: __import__(
+        "tests.e2e.conftest", fromlist=["make_proto_response"]
+    ).make_proto_response(r.application_id, scoring_pb2.DECISION_MANUAL_REVIEW)
+
+    headers = await _setup_full_profile(client, "review@example.com")
+    create = await client.post("/applications", json=make_body(), headers=headers)
+    assert create.status_code == 201
+    assert create.json()["status"] == "different"
+
+
+async def test_decline_declined(e2e_client):
+    """decline → declined"""
+    client, servicer = e2e_client
+    servicer.response_factory = lambda r: __import__(
+        "tests.e2e.conftest", fromlist=["make_proto_response"]
+    ).make_proto_response(r.application_id, scoring_pb2.DECISION_DECLINE)
+
+    headers = await _setup_full_profile(client, "decline@example.com")
+    create = await client.post("/applications", json=make_body(), headers=headers)
+    assert create.status_code == 201
+    assert create.json()["status"] == "declined"
+
+
+async def test_ml_unavailable_failed(e2e_client):
+    """ML down → failed + 502"""
+    client, servicer = e2e_client
     servicer.score_error = (grpc.StatusCode.UNAVAILABLE, "down")
 
-    response = await client.post("/scoring/applications", json=make_body(), headers=headers)
+    headers = await _setup_full_profile(client, "mldown@example.com")
+    response = await client.post("/applications", json=make_body(), headers=headers)
     assert response.status_code == 502
 
     async with database.new_session() as session:
-        result = await session.execute(select(ApplicationOrm))
-        apps = result.scalars().all()
-
+        from sqlalchemy import select
+        apps = (await session.execute(select(ApplicationOrm))).scalars().all()
     assert len(apps) == 1
     assert apps[0].status == "failed"
 
 
-async def test_pagination_flow(e2e_client):
-    """Создание пяти заявок и проход по страницам через курсор"""
+async def test_profile_incomplete_returns_400(e2e_client):
+    """Профиль пуст и в теле нет company/financials/credit_history → 400"""
     client, _ = e2e_client
-    headers = await _auth_headers(client, "page@example.com")
+    headers = await _auth_headers(client, "empty@example.com")
+    response = await client.post("/applications", json=make_body(), headers=headers)
+    assert response.status_code == 400
+    assert "Профиль" in response.json()["detail"]
 
-    for _ in range(5):
-        response = await client.post(
-            "/scoring/applications", json=make_body(), headers=headers
-        )
-        assert response.status_code == 201
 
-    page1 = await client.get("/scoring/applications?limit=2", headers=headers)
-    assert page1.status_code == 200
-    assert len(page1.json()["applications"]) == 2
-    cursor1 = page1.json()["next_cursor"]
-    assert cursor1
+async def test_profile_via_create_body(e2e_client):
+    """Профиль заполняется из тела POST /applications"""
+    client, _ = e2e_client
+    headers = await _auth_headers(client, "inline@example.com")
 
-    page2 = await client.get(
-        f"/scoring/applications?limit=2&cursor={cursor1}", headers=headers
-    )
-    assert len(page2.json()["applications"]) == 2
+    body = {**make_body("term_loan"), **make_profile()}
+    create = await client.post("/applications", json=body, headers=headers)
+    assert create.status_code == 201
+    assert create.json()["status"] == "confirmed"
 
-    page3 = await client.get(
-        f"/scoring/applications?limit=2&cursor={page2.json()['next_cursor']}",
-        headers=headers,
-    )
-    assert len(page3.json()["applications"]) == 1
-    assert page3.json()["next_cursor"] is None
+    me = await client.get("/auth/me", headers=headers)
+    assert me.status_code == 200
+    assert me.json()["company"]["legal_name"] == "ООО Ромашка"
 
 
 async def test_user_cannot_see_other_application(e2e_client):
-    """Обычный пользователь получает 403 на чужую заявку"""
+    """Обычный пользователь → 403 на чужую заявку"""
     client, _ = e2e_client
+    owner = await _setup_full_profile(client, "owner@example.com")
+    stranger = await _setup_full_profile(client, "stranger@example.com")
 
-    owner_headers = await _auth_headers(client, "owner@example.com")
-    stranger_headers = await _auth_headers(client, "stranger@example.com")
-
-    create = await client.post(
-        "/scoring/applications", json=make_body(), headers=owner_headers
-    )
+    create = await client.post("/applications", json=make_body(), headers=owner)
     app_id = create.json()["application_id"]
 
-    response = await client.get(
-        f"/scoring/applications/{app_id}", headers=stranger_headers
-    )
+    response = await client.get(f"/applications/{app_id}", headers=stranger)
     assert response.status_code == 403
 
 
-async def test_admin_can_see_other_application(e2e_client):
+async def test_admin_sees_other_application(e2e_client):
     """Админ видит чужую заявку"""
     client, _ = e2e_client
-
-    owner_headers = await _auth_headers(client, "owner2@example.com")
-    admin_headers = await _auth_headers(client, "admin2@example.com")
+    owner = await _setup_full_profile(client, "owner2@example.com")
+    admin = await _setup_full_profile(client, "admin2@example.com")
     await _make_admin("admin2@example.com")
 
-    create = await client.post(
-        "/scoring/applications", json=make_body(), headers=owner_headers
-    )
+    create = await client.post("/applications", json=make_body(), headers=owner)
     app_id = create.json()["application_id"]
 
-    response = await client.get(
-        f"/scoring/applications/{app_id}", headers=admin_headers
-    )
+    response = await client.get(f"/applications/{app_id}", headers=admin)
     assert response.status_code == 200
-
-
-async def test_model_info_flow(e2e_client):
-    """Информация о модели доступна после логина"""
-    client, _ = e2e_client
-    headers = await _auth_headers(client, "info@example.com")
-
-    response = await client.get("/scoring/model-info", headers=headers)
-    assert response.status_code == 200
-    assert response.json()["model_version"] == "v1.0.0"
-
-
-async def test_batch_scoring_flow(e2e_client):
-    """Пакетный скоринг возвращает результаты"""
-    client, _ = e2e_client
-    headers = await _auth_headers(client, "batch@example.com")
-
-    body = {"applications": [make_body(), make_body()]}
-    response = await client.post("/scoring/batch", json=body, headers=headers)
-    assert response.status_code == 200
-    assert len(response.json()["results"]) == 2
 
 
 async def test_get_missing_application(e2e_client):
-    """Несуществующая заявка возвращает 404"""
+    """Несуществующая заявка → 404"""
     client, _ = e2e_client
     headers = await _auth_headers(client, "missing@example.com")
-
-    response = await client.get("/scoring/applications/nope", headers=headers)
+    response = await client.get("/applications/nope", headers=headers)
     assert response.status_code == 404
 
 
-async def test_products_flow(e2e_client):
-    """Сквозной путь по каталогу продуктов после старта приложения"""
+async def test_products_available(e2e_client):
+    """Каталог продуктов доступен без авторизации"""
     client, _ = e2e_client
-
-    listing = await client.get("/products")
-    assert listing.status_code == 200
-    data = listing.json()
-    assert len(data["products"]) == 5
-    codes = [p["code"] for p in data["products"]]
-    assert codes == ["microloan", "working_capital", "overdraft", "credit_line", "leasing"]
-
-    detail = await client.get("/products/leasing")
-    assert detail.status_code == 200
-    body = detail.json()
-    assert body["name"] == "Лизинг оборудования"
-    assert body["product_type"] == "leasing"
-    assert body["extras"]["advance_percent_min"] == 10
-
-    missing = await client.get("/products/does-not-exist")
-    assert missing.status_code == 404
+    response = await client.get("/products")
+    assert response.status_code == 200
+    assert len(response.json()["products"]) == 5

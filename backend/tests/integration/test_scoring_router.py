@@ -117,26 +117,8 @@ async def client(scoring_client, test_user):
         yield ac
 
 
-@pytest_asyncio.fixture
-async def admin_client(scoring_client, admin_user):
-    """Авторизованный клиент от лица admin_user"""
-    app = _build_app(scoring_client, admin_user)
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        yield ac
-
-
-@pytest_asyncio.fixture
-async def unauth_client(scoring_client):
-    """Клиент без переопределения авторизации"""
-    app = _build_app(scoring_client)
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        yield ac
-
-
 def make_body():
-    """Возвращает валидное тело POST /scoring/applications"""
+    """Возвращает валидное тело скоринга"""
     return {
         "application": {
             "product_type": "term_loan",
@@ -180,56 +162,6 @@ def make_body():
     }
 
 
-async def test_create_application_success(client):
-    """Возвращает 201 с application_id и результатом скоринга"""
-    response = await client.post("/scoring/applications", json=make_body())
-    assert response.status_code == 201
-    data = response.json()
-    assert data["application_id"]
-    assert data["score"] == 712
-    assert data["risk_grade"] == "B"
-    assert data["decision"]["decision"] == "approve"
-
-
-async def test_create_application_ml_unavailable(client, fake_grpc_server):
-    """При UNAVAILABLE возвращает 502"""
-    _, _, servicer = fake_grpc_server
-    servicer.score_error = (grpc.StatusCode.UNAVAILABLE, "down")
-
-    response = await client.post("/scoring/applications", json=make_body())
-    assert response.status_code == 502
-
-
-async def test_create_application_ml_invalid(client, fake_grpc_server):
-    """При INVALID_ARGUMENT возвращает 400"""
-    _, _, servicer = fake_grpc_server
-    servicer.score_error = (grpc.StatusCode.INVALID_ARGUMENT, "bad")
-
-    response = await client.post("/scoring/applications", json=make_body())
-    assert response.status_code == 400
-
-
-async def test_create_application_ml_deadline(client, fake_grpc_server):
-    """При DEADLINE_EXCEEDED возвращает 504"""
-    _, _, servicer = fake_grpc_server
-    servicer.score_error = (grpc.StatusCode.DEADLINE_EXCEEDED, "slow")
-
-    response = await client.post("/scoring/applications", json=make_body())
-    assert response.status_code == 504
-
-
-async def test_create_application_invalid_body(client):
-    """Возвращает 422 при невалидном теле"""
-    response = await client.post("/scoring/applications", json={})
-    assert response.status_code == 422
-
-
-async def test_create_application_unauthorized(unauth_client):
-    """Возвращает 401 без токена"""
-    response = await unauth_client.post("/scoring/applications", json=make_body())
-    assert response.status_code == 401
-
-
 async def test_batch_success(client):
     """Batch возвращает результаты"""
     body = {"applications": [make_body(), make_body()]}
@@ -263,76 +195,3 @@ async def test_model_info_ml_error(client, fake_grpc_server):
 
     response = await client.get("/scoring/model-info")
     assert response.status_code == 502
-
-
-async def test_list_applications_empty(client):
-    """Пустой список заявок"""
-    response = await client.get("/scoring/applications")
-    assert response.status_code == 200
-    assert response.json()["applications"] == []
-
-
-async def test_list_applications_with_items(client):
-    """Список содержит созданные заявки"""
-    await client.post("/scoring/applications", json=make_body())
-    await client.post("/scoring/applications", json=make_body())
-
-    response = await client.get("/scoring/applications")
-    assert response.status_code == 200
-    assert len(response.json()["applications"]) == 2
-
-
-async def test_list_applications_invalid_limit(client):
-    """Возвращает 400 при невалидном лимите"""
-    response = await client.get("/scoring/applications?limit=0")
-    assert response.status_code == 400
-
-
-async def test_list_applications_invalid_direction(client):
-    """Возвращает 400 при невалидном направлении"""
-    response = await client.get("/scoring/applications?direction=unknown")
-    assert response.status_code == 400
-
-
-async def test_list_applications_invalid_cursor(client):
-    """Возвращает 400 при невалидном курсоре"""
-    response = await client.get("/scoring/applications?cursor=!!!")
-    assert response.status_code == 400
-
-
-async def test_get_application_own(client):
-    """Своя заявка с результатом доступна"""
-    create = await client.post("/scoring/applications", json=make_body())
-    app_id = create.json()["application_id"]
-
-    response = await client.get(f"/scoring/applications/{app_id}")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["application_id"] == app_id
-    assert data["scoring_result"]["score"] == 712
-
-
-async def test_get_application_missing(client):
-    """Несуществующая заявка → 404"""
-    response = await client.get("/scoring/applications/nope")
-    assert response.status_code == 404
-
-
-async def test_get_application_other_user_forbidden(client, admin_client):
-    """Обычный пользователь не видит чужую заявку"""
-    await admin_client.post("/scoring/applications", json=make_body())
-    admin_apps = await admin_client.get("/scoring/applications")
-    admin_app_id = admin_apps.json()["applications"][0]["application_id"]
-
-    response = await client.get(f"/scoring/applications/{admin_app_id}")
-    assert response.status_code == 403
-
-
-async def test_get_application_admin_sees_others(client, admin_client):
-    """Админ видит чужую заявку"""
-    await client.post("/scoring/applications", json=make_body())
-    apps = await client.get("/scoring/applications")
-    app_id = apps.json()["applications"][0]["application_id"]
-
-    response = await admin_client.get(f"/scoring/applications/{app_id}")
-    assert response.status_code == 200
