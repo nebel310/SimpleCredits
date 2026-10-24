@@ -17,6 +17,7 @@ from schemas.auth import _build_company, _build_credit_history, _build_financial
 from services.enrichment import enrich
 from services.exceptions import ProfileIncompleteError
 from services.scoring import decision_to_status
+from services.ws_manager import ws_manager
 
 
 class ApplicationService:
@@ -71,6 +72,18 @@ class ApplicationService:
         enriched = await enrich(company.inn)
         await ApplicationRepository.save_enriched(application.application_id, enriched)
 
+        sources = [k for k, v in enriched.items() if v is not None]
+        await ws_manager.broadcast(
+            refreshed.id,
+            {
+                "type": "event",
+                "application_id": application.application_id,
+                "event_type": "enriched",
+                "payload": {"sources": sources},
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
         try:
             proto_request = schema_to_proto_score_request(
                 request_for_ml, application.application_id
@@ -78,6 +91,16 @@ class ApplicationService:
             proto_response = await client.score_application(proto_request)
         except GrpcServiceError as exc:
             await ApplicationRepository.mark_failed(application.application_id, str(exc))
+            await ws_manager.broadcast(
+                refreshed.id,
+                {
+                    "type": "status_changed",
+                    "application_id": application.application_id,
+                    "status": "failed",
+                    "payload": {"error": str(exc)},
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
             raise
 
         response = proto_to_schema_response(proto_response)
@@ -89,6 +112,23 @@ class ApplicationService:
             scoring_result=response.model_dump(mode="json"),
             status=status,
         )
+
+        await ws_manager.broadcast(
+            refreshed.id,
+            {
+                "type": "status_changed",
+                "application_id": application.application_id,
+                "status": status,
+                "payload": {
+                    "score": response.score,
+                    "risk_grade": response.risk_grade,
+                    "decision": decision_value,
+                    "reason_codes": [rc.model_dump() for rc in response.reason_codes],
+                },
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
         return updated or application
 
     @classmethod

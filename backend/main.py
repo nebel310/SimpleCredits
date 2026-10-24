@@ -20,6 +20,7 @@ from router.files import router as file_router
 from router.mock import router as mock_router
 from router.products import router as products_router
 from router.scoring import router as scoring_router
+from router.ws import router as ws_router
 
 
 
@@ -123,6 +124,7 @@ app.include_router(scoring_router)
 app.include_router(products_router)
 app.include_router(mock_router)
 app.include_router(applications_router)
+app.include_router(ws_router)
 
 
 if __name__ == "__main__":

@@ -63,6 +63,7 @@ dev = [
     "pytest-cov>=6.0.0",
     "httpx>=0.28.0",
     "aiosqlite>=0.22.1",
+    "websockets>=17.3",
 ]
 
 [tool.pytest.ini_options]
