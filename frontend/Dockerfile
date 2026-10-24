@@ -4,13 +4,14 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY . .
-# VITE_API_MODE=http — работать с бэкендом; по умолчанию мок в браузере
-ARG VITE_API_MODE=mock
+# Адрес API для браузера. /api проксирует nginx (см. nginx.conf)
 ARG VITE_API_URL=/api
-ENV VITE_API_MODE=$VITE_API_MODE VITE_API_URL=$VITE_API_URL
+ARG VITE_ADMIN_EMAIL=admin@admin.com
+ARG VITE_ADMIN_PASSWORD=admin
+ENV VITE_API_URL=$VITE_API_URL VITE_ADMIN_EMAIL=$VITE_ADMIN_EMAIL VITE_ADMIN_PASSWORD=$VITE_ADMIN_PASSWORD
 RUN npm run build
 
-# Раздача статики
+# Раздача статики и прокси на бэкенд
 FROM nginx:1.27-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
