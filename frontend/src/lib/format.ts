@@ -1,9 +1,9 @@
-export const money = (n: number | null | undefined, unit = ' ₽') =>
-  n === null || n === undefined ? '—' : new Intl.NumberFormat('ru-RU').format(Math.round(n)).replace(/ /g, ' ') + unit;
+export const money = (n: number | null | undefined, unit = '\u00a0₽') =>
+  n === null || n === undefined ? '—' : new Intl.NumberFormat('ru-RU').format(Math.round(n)).replace(/[\u202f\u00a0 ]/g, '\u00a0') + unit;
 
 export const mln = (n: number) => {
   const v = n / 1_000_000;
-  return `${(Number.isInteger(v) ? v.toString() : v.toFixed(1)).replace('.', ',')} млн ₽`;
+  return `${(Number.isInteger(v) ? v.toString() : v.toFixed(1)).replace('.', ',')}\u00a0млн\u00a0₽`;
 };
 
 export const pct = (n: number, digits = 1) => `${n.toFixed(digits).replace('.', ',')}%`;
