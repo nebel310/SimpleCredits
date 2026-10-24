@@ -16,6 +16,9 @@ from router.auth import router as auth_router
 from router.files import router as file_router
 from repositories.auth import UserRepository
 from minio.client import s3_client
+from repositories.products import ProductRepository
+from router.products import router as products_router
+from router.mock import router as mock_router
 
 
 
@@ -28,6 +31,16 @@ async def lifespan(app: FastAPI):
 
     await s3_client.ensure_bucket()
     print(f"Бакет {s3_client.bucket_name} создан")
+
+    await ProductRepository.ensure_products()
+    print("Продукты загружены")
+
+    await UserRepository.ensure_admin(
+        email=os.getenv("ADMIN_EMAIL", "admin@example.com"),
+        password=os.getenv("ADMIN_PASSWORD", "admin123"),
+        username=os.getenv("ADMIN_USERNAME", "admin"),
+    )
+    print("Администратор готов")
 
     scoring_client = ScoringClient(
         host=os.getenv("ML_GRPC_HOST", "ml"),
@@ -44,26 +57,15 @@ async def lifespan(app: FastAPI):
     print("Выключение")
 
 
-
-
 def custom_openapi():
     """Кастомная OpenAPI схема с настройками безопасности."""
     if app.openapi_schema:
         return app.openapi_schema
         
     openapi_schema = get_openapi(
-        title="FastAPI Base Template - Разработано Григорьевым Владиславом Алексеевичем",
+        title="FastAPI REST API FOR ALFA HACK",
         version="1.0.0",
-        description="""Базовый шаблон FastAPI с JWT аутентификацией
-    
-**Разработчик:** Григорьев Владислав Алексеевич
-**Контакты:** 
-- Телеграм: @vlados7529
-- Телефон: +7 (916) 054 44-35  
-- GitHub: github.com/nebel310
-- Email: m2316174@edu.misis.ru
-
-*Этот бэкенд был создан как базовый шаблон для быстрого старта проектов*""",
+        description="""API для кредитной платформы""",
         routes=app.routes,
     )
     
@@ -122,6 +124,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(file_router)
 app.include_router(scoring_router)
+app.include_router(mock_router)
 
 
 if __name__ == "__main__":

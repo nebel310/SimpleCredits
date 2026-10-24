@@ -4,7 +4,7 @@ from sqlalchemy import select, update
 
 import database
 from models.auth import UserOrm
-from models.scoring import ApplicationOrm
+from models.applications import ApplicationOrm
 
 
 def make_body():
@@ -286,3 +286,25 @@ async def test_get_missing_application(e2e_client):
 
     response = await client.get("/scoring/applications/nope", headers=headers)
     assert response.status_code == 404
+
+
+async def test_products_flow(e2e_client):
+    """Сквозной путь по каталогу продуктов после старта приложения"""
+    client, _ = e2e_client
+
+    listing = await client.get("/products")
+    assert listing.status_code == 200
+    data = listing.json()
+    assert len(data["products"]) == 5
+    codes = [p["code"] for p in data["products"]]
+    assert codes == ["microloan", "working_capital", "overdraft", "credit_line", "leasing"]
+
+    detail = await client.get("/products/leasing")
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["name"] == "Лизинг оборудования"
+    assert body["product_type"] == "leasing"
+    assert body["extras"]["advance_percent_min"] == 10
+
+    missing = await client.get("/products/does-not-exist")
+    assert missing.status_code == 404

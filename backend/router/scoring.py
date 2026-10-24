@@ -16,11 +16,9 @@ from ml_grpc.mappers import (
     proto_to_schema_response,
     schema_to_proto_score_request,
 )
-from datetime import datetime, timezone
 from models.auth import UserOrm
-from repositories.scoring import ScoringRepository
-from schemas.base import ErrorResponse, ValidationErrorResponse
-from schemas.scoring import (
+from repositories.applications import ApplicationRepository
+from schemas.applications import (
     SApplicationDetail,
     SApplicationListResponse,
     SBatchScoreApplicationsRequest,
@@ -30,6 +28,7 @@ from schemas.scoring import (
     SScoreApplicationResponse,
     application_orm_to_schema,
 )
+from schemas.base import ErrorResponse, ValidationErrorResponse
 from utils.pagination import decode_cursor, encode_cursor
 from utils.security import get_current_user
 
@@ -76,33 +75,21 @@ async def create_application(
     Создаёт кредитную заявку, отправляет в ML-сервис и сохраняет результат скоринга.
     Возвращает полный ответ ML-сервиса вместе с application_id.
     """
-    application = await ScoringRepository.create_application(current_user.id, data)
+    application = await ApplicationRepository.create(current_user.id, data)
 
     try:
         proto_request = schema_to_proto_score_request(data, application.application_id)
         proto_response = await client.score_application(proto_request)
     except GrpcServiceError as exc:
-        await ScoringRepository.mark_application_failed(application.application_id)
+        await ApplicationRepository.mark_failed(application.application_id, str(exc))
         raise _grpc_http_exception(exc) from exc
 
     response = proto_to_schema_response(proto_response)
 
-    await ScoringRepository.save_scoring_result(
+    await ApplicationRepository.update_scoring(
         application.application_id,
-        {
-            "score": response.score,
-            "pd": response.pd,
-            "risk_grade": response.risk_grade,
-            "model_version": response.model_version,
-            "scored_at": response.scored_at or datetime.now(timezone.utc),
-            "decision": response.decision.decision if response.decision else None,
-            "reason_codes": [rc.model_dump() for rc in response.reason_codes],
-            "conditions": (
-                [c.model_dump() for c in response.decision.conditions]
-                if response.decision
-                else []
-            ),
-        },
+        scoring_result=response.model_dump(mode="json"),
+        status="scored",
     )
 
     return response
@@ -123,10 +110,7 @@ async def batch_score(
     current_user: UserOrm = Depends(get_current_user),
     client: ScoringClient = Depends(get_scoring_client),
 ):
-    """
-    Пакетный скоринг без сохранения заявок в БД.
-    Предназначен для внутренних вызовов и превью.
-    """
+    """Пакетный скоринг без сохранения заявок в БД"""
     proto_apps = [
         schema_to_proto_score_request(item, uuid.uuid4().hex)
         for item in data.applications
@@ -192,7 +176,7 @@ async def list_applications(
             raise HTTPException(status_code=400, detail="Некорректный курсор")
 
     try:
-        applications, next_id, prev_id = await ScoringRepository.get_user_applications_paginated(
+        applications, next_id, prev_id = await ApplicationRepository.get_user_applications_paginated(
             user_id=current_user.id,
             cursor_id=cursor_id,
             direction=direction,
@@ -201,12 +185,7 @@ async def list_applications(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    details = []
-    for application in applications:
-        result = await ScoringRepository.get_scoring_result_by_application_id(
-            application.application_id
-        )
-        details.append(application_orm_to_schema(application, result))
+    details = [application_orm_to_schema(a) for a in applications]
 
     return SApplicationListResponse(
         applications=details,
@@ -229,7 +208,7 @@ async def get_application(
     current_user: UserOrm = Depends(get_current_user),
 ):
     """Возвращает заявку и результат её скоринга по application_id"""
-    application = await ScoringRepository.get_application_by_application_id(application_id)
+    application = await ApplicationRepository.get_by_application_id(application_id)
 
     if not application:
         raise HTTPException(status_code=404, detail="Заявка не найдена")
@@ -237,6 +216,4 @@ async def get_application(
     if application.user_id != current_user.id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Недостаточно прав")
 
-    result = await ScoringRepository.get_scoring_result_by_application_id(application_id)
-
-    return application_orm_to_schema(application, result)
+    return application_orm_to_schema(application)

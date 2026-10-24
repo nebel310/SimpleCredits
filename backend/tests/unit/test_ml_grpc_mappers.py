@@ -20,7 +20,7 @@ from ml_grpc.mappers import (
     schema_to_proto_score_request,
     timestamp_to_dt,
 )
-from schemas.scoring import (
+from schemas.applications import (
     SApplication,
     SCompany,
     SCreditHistory,

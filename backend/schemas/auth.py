@@ -2,16 +2,16 @@ from datetime import datetime, date
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 from typing import Literal
 
-
+from schemas.applications import SCompany, SFinancials, SCreditHistory
 
 
 class SUserRegister(BaseModel):
-    """Схема для регистрации нового пользователя."""
+    """Схема для регистрации нового пользователя"""
     username: str
     email: EmailStr
     password: str
     password_confirm: str
-    
+
     model_config = ConfigDict(
         json_schema_extra={
             "examples": [
@@ -19,7 +19,7 @@ class SUserRegister(BaseModel):
                     "username": "john_doe",
                     "email": "john@example.com",
                     "password": "securepassword123",
-                    "password_confirm": "securepassword123"
+                    "password_confirm": "securepassword123",
                 }
             ]
         }
@@ -27,46 +27,34 @@ class SUserRegister(BaseModel):
 
 
 class SUserLogin(BaseModel):
-    """Схема для входа в систему."""
+    """Схема для входа в систему"""
     email: EmailStr
     password: str
-    
+
     model_config = ConfigDict(
         json_schema_extra={
-            "examples": [
-                {
-                    "email": "john@example.com",
-                    "password": "securepassword123"
-                }
-            ]
+            "examples": [{"email": "john@example.com", "password": "securepassword123"}]
         }
     )
-    
-    
+
+
 class SUserUpdate(BaseModel):
-    """Данные для частичного обновления профиля. Все поля опциональны."""
+    """Данные для частичного обновления профиля. Все поля опциональны"""
     username: str | None = Field(None, min_length=1, max_length=50)
     email: EmailStr | None = None
     avatar_id: int | None = None
     bio: str | None = Field(None, max_length=500)
     birth_date: date | None = None
     gender: Literal["male", "female"] | None = None
+    company: SCompany | None = None
+    financials: SFinancials | None = None
+    credit_history: SCreditHistory | None = None
 
-    model_config = ConfigDict(
-        json_schema_extra={
-            "examples": [{
-                "username": "new_name",
-                "bio": "Привет, я новый пользователь",
-                "birth_date": "2000-01-01",
-                "gender": "male"
-            }]
-        }
-    )
-
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def check_at_least_one_field(self):
+        """Запрещает пустой апдейт"""
         if all(v is None for v in self.__dict__.values()):
-            raise ValueError('Не передано ни одного поля для обновления')
+            raise ValueError("Не передано ни одного поля для обновления")
         return self
 
 
@@ -76,42 +64,17 @@ class SUser(BaseModel):
     username: str
     email: EmailStr
     role: Literal["admin", "user"]
-    avatar_id: int | None=None
+    avatar_id: int | None = None
     bio: str | None = None
     birth_date: date | None = None
     gender: str | None = None
     created_at: datetime
+    company: SCompany | None = None
+    financials: SFinancials | None = None
+    credit_history: SCreditHistory | None = None
 
-    model_config = ConfigDict(
-        from_attributes=True,
-        json_schema_extra={
-            "examples": [
-                {
-                    "id": 1,
-                    "username": "john_doe",
-                    "email": "john@example.com",
-                    "role": "user",
-                    "avatar_id": None,
-                    "bio": None,
-                    "birth_date": None,
-                    "gender": None,
-                    "created_at": "2024-01-01T12:00:00Z"
-                },
-                {
-                    "id": 2,
-                    "username": "admin",
-                    "email": "admin@example.com",
-                    "role": "admin",
-                    "avatar_id": None,
-                    "bio": None,
-                    "birth_date": None,
-                    "gender": None,
-                    "created_at": "2024-01-01T12:00:00Z"
-                }
-            ]
-        }
-    )
-    
+    model_config = ConfigDict(from_attributes=True)
+
 
 class SUserListResponse(BaseModel):
     users: list[SUser]
@@ -119,20 +82,15 @@ class SUserListResponse(BaseModel):
     previous_cursor: str | None = None
 
 
-
-# ============================================
-
-
-
 class RegisterResponse(BaseModel):
-    """Схема ответа для успешной регистрации."""
+    """Схема ответа для успешной регистрации"""
     success: bool = Field(..., example=True)
     user_id: int = Field(..., example=1)
     message: str = Field(..., example="Регистрация прошла успешно")
 
 
 class LoginResponse(BaseModel):
-    """Схема ответа для успешного входа."""
+    """Схема ответа для успешного входа"""
     success: bool = Field(..., example=True)
     message: str = Field(..., example="Вы вошли в аккаунт")
     access_token: str = Field(..., example="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...")
@@ -141,11 +99,66 @@ class LoginResponse(BaseModel):
 
 
 class RefreshResponse(BaseModel):
-    """Схема ответа для обновления токена."""
+    """Схема ответа для обновления токена"""
     access_token: str = Field(..., example="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...")
     token_type: str = Field(..., example="bearer")
 
 
 class LogoutResponse(BaseModel):
-    """Схема ответа для выхода из системы."""
+    """Схема ответа для выхода из системы"""
     success: bool = Field(..., example=True)
+
+
+COMPANY_FIELDS = (
+    "inn", "ogrn", "legal_name", "legal_form", "okved",
+    "region", "registration_date", "employee_count",
+)
+FINANCIALS_FIELDS = (
+    "annual_revenue_rub", "annual_net_profit_rub", "ebitda_rub", "total_debt_rub",
+    "monthly_revenue_rub", "monthly_expenses_rub", "accounts_receivable_rub",
+    "cash_balance_rub", "period_end",
+)
+CREDIT_HISTORY_FIELDS = (
+    "active_obligations_count", "total_outstanding_rub", "monthly_debt_payments_rub",
+    "max_days_past_due_12m", "has_current_past_due", "credit_utilization",
+    "closed_obligations_count", "applications_last_6m",
+)
+
+
+def _build_company(user) -> SCompany | None:
+    """Собирает SCompany из ORM если все поля заполнены"""
+    if any(getattr(user, f) is None for f in COMPANY_FIELDS):
+        return None
+    return SCompany(**{f: getattr(user, f) for f in COMPANY_FIELDS})
+
+
+def _build_financials(user) -> SFinancials | None:
+    """Собирает SFinancials из ORM если все поля заполнены"""
+    if any(getattr(user, f) is None for f in FINANCIALS_FIELDS):
+        return None
+    return SFinancials(**{f: getattr(user, f) for f in FINANCIALS_FIELDS})
+
+
+def _build_credit_history(user) -> SCreditHistory | None:
+    """Собирает SCreditHistory из ORM если все поля заполнены"""
+    if any(getattr(user, f) is None for f in CREDIT_HISTORY_FIELDS):
+        return None
+    return SCreditHistory(**{f: getattr(user, f) for f in CREDIT_HISTORY_FIELDS})
+
+
+def user_orm_to_schema(user) -> SUser:
+    """Собирает SUser из ORM-модели с профилем компании, финансов и КИ"""
+    return SUser(
+        id=user.id,
+        username=user.username,
+        email=user.email,
+        role=user.role,
+        avatar_id=user.avatar_id,
+        bio=user.bio,
+        birth_date=user.birth_date,
+        gender=user.gender,
+        created_at=user.created_at,
+        company=_build_company(user),
+        financials=_build_financials(user),
+        credit_history=_build_credit_history(user),
+    )

@@ -156,60 +156,73 @@ class UserRepository:
             await session.commit()
     
     
-    @classmethod
-    async def update_user(
-        cls,
-        user_id: int,
-        update_data: dict
-    ) -> UserOrm:
-        """
-        Частично обновляет пользователя.
-        `update_data` — словарь полей, которые нужно поменять.
-        Возвращает обновлённый объект пользователя.
-        """
-        
-        new_avatar_id = update_data.pop('avatar_id', None)
+@classmethod
+async def update_user(
+    cls,
+    user_id: int,
+    update_data: dict
+) -> UserOrm:
+    """Частично обновляет пользователя и его профиль компании/финансов/КИ"""
+    new_avatar_id = update_data.pop("avatar_id", None)
+    company = update_data.pop("company", None)
+    financials = update_data.pop("financials", None)
+    credit_history = update_data.pop("credit_history", None)
 
-        async with new_session() as session:
-            user = await session.get(UserOrm, user_id)
-            if not user:
-                raise ValueError("Пользователь не найден")
+    async with new_session() as session:
+        user = await session.get(UserOrm, user_id)
+        if not user:
+            raise ValueError("Пользователь не найден")
 
-            if new_avatar_id is not None and new_avatar_id != user.avatar_id:
-                file_record = await session.get(FileOrm, new_avatar_id)
-                if not file_record:
-                    raise ObjectNotFoundError(f"Файл с id={new_avatar_id} не найден")
-                if file_record.uploaded_by != user_id:
-                    raise ValueError("Нельзя использовать чужие файлы для аватарки")
+        if new_avatar_id is not None and new_avatar_id != user.avatar_id:
+            file_record = await session.get(FileOrm, new_avatar_id)
+            if not file_record:
+                raise ObjectNotFoundError(f"Файл с id={new_avatar_id} не найден")
+            if file_record.uploaded_by != user_id:
+                raise ValueError("Нельзя использовать чужие файлы для аватарки")
 
-                if user.avatar_id is not None:
-                    old_file = await session.get(FileOrm, user.avatar_id)
-                    if old_file:
-                        await session.delete(old_file)
-                        try:
-                            await s3_client.delete(old_file.object_key)
-                        except (ObjectNotFoundError, StorageError):
-                            pass
+            if user.avatar_id is not None:
+                old_file = await session.get(FileOrm, user.avatar_id)
+                if old_file:
+                    await session.delete(old_file)
+                    try:
+                        await s3_client.delete(old_file.object_key)
+                    except (ObjectNotFoundError, StorageError):
+                        pass
 
-                user.avatar_id = new_avatar_id
+            user.avatar_id = new_avatar_id
 
-            if update_data:
-                for key, value in update_data.items():
-                    if hasattr(user, key):
-                        setattr(user, key, value)
-
-            if 'email' in update_data:
-                existing = await session.execute(
-                    select(UserOrm).where(
-                        UserOrm.email == update_data['email'], UserOrm.id != user_id
-                    )
+        if "email" in update_data:
+            existing = await session.execute(
+                select(UserOrm).where(
+                    UserOrm.email == update_data["email"], UserOrm.id != user_id
                 )
-                if existing.scalars().first():
-                    raise ValueError("Пользователь с таким email уже существует")
+            )
+            if existing.scalars().first():
+                raise ValueError("Пользователь с таким email уже существует")
 
-            await session.commit()
-            await session.refresh(user)
-            return user
+        if update_data:
+            for key, value in update_data.items():
+                if hasattr(user, key):
+                    setattr(user, key, value)
+
+        if company is not None:
+            for field, value in company.items():
+                if hasattr(user, field):
+                    setattr(user, field, value)
+
+        if financials is not None:
+            for field, value in financials.items():
+                if hasattr(user, field):
+                    setattr(user, field, value)
+
+        if credit_history is not None:
+            for field, value in credit_history.items():
+                if hasattr(user, field):
+                    setattr(user, field, value)
+
+        await session.commit()
+        await session.refresh(user)
+        return user
 
 
     @classmethod
