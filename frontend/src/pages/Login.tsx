@@ -41,7 +41,7 @@ export function Login() {
   const errors = {
     username: tab === 'register' && !username.trim() ? 'Укажите имя пользователя' : null,
     email: !EMAIL_RE.test(email.trim()) ? 'Укажите email, например name@company.ru' : null,
-    password: !password ? 'Введите пароль' : null,
+    password: !password ? 'Введите пароль' : tab === 'register' && password.length < 6 ? 'Пароль — не короче 6 символов' : null,
     password2: tab === 'register' && password2 !== password ? 'Пароли не совпадают' : null,
   };
   const valid = !Object.values(errors).some(Boolean);

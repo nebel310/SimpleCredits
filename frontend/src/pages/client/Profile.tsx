@@ -13,6 +13,9 @@ type Money = number | null;
 const toDay = (iso?: string | null) => (iso ? iso.slice(0, 10) : '');
 const fromDay = (d: string) => `${d}T00:00:00Z`;
 const digits = (v: string, max: number) => v.replace(/\D/g, '').slice(0, max);
+const today = () => new Date().toISOString().slice(0, 10);
+/** Дата обязательна и не позже сегодняшней */
+const dateError = (d: string, what: string) => (!d ? 'Укажите дату' : d > today() ? `${what} не может быть в будущем` : d < '1991-01-01' ? 'Проверьте год' : null);
 
 function IntField({ label, value, onChange, error, hint }: { label: string; value: number | null; onChange: (v: number | null) => void; error?: string | null; hint?: string }) {
   return <TextField label={label} value={value === null ? '' : String(value)} inputMode="numeric" onChange={(v) => onChange(v.replace(/\D/g, '') ? Number(digits(v, 9)) : null)} error={error} hint={hint} />;
@@ -107,9 +110,9 @@ export function Profile() {
     legal_name: !v.legal_name.trim() ? 'Укажите название' : null,
     okved: !v.okved.trim() ? 'Укажите код ОКВЭД' : null,
     region: !v.region.trim() ? 'Укажите регион' : null,
-    registration_date: !v.registration_date ? 'Укажите дату' : null,
+    registration_date: dateError(v.registration_date, 'Дата регистрации'),
     employee_count: v.employee_count === null ? 'Укажите число' : null,
-    period_end: !v.period_end ? 'Укажите дату' : null,
+    period_end: dateError(v.period_end, 'Отчётный период'),
     utilization: v.utilization === null || v.utilization > 100 ? 'От 0 до 100%' : null,
   };
   const finMissing = FIN_FIELDS.filter((f) => v.fin[f.key] === null).map((f) => f.key);
