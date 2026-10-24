@@ -1,0 +1,1010 @@
+openapi: 3.0.3
+info:
+  title: SimpleCredits API
+  version: 2.0.0
+  description: |
+    API умного кредитного кабинета предпринимателя (хакатон Альфа-Будущее 2026).
+
+    - Базовый URL: `http://localhost:3001`
+    - Формат: JSON (кроме `/files/*` — multipart/octet-stream)
+    - Защищённые эндпоинты требуют `Authorization: Bearer <access_token>`
+    - Access-токен живёт 15 минут, refresh — 7 дней
+    - Ошибки: `{"detail": "..."}`
+
+    WebSocket: `ws://localhost:3001/ws/applications?token=<access_token>`. Невалидный JWT → закрытие с кодом `4401`.
+
+servers:
+  - url: http://localhost:3001
+    description: Локальная разработка
+
+tags:
+  - name: Auth
+  - name: Files
+  - name: Products
+  - name: Applications
+  - name: Scoring (aux)
+  - name: Admin
+  - name: Mock
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+
+    # ============================================================
+    # AUTH
+    # ============================================================
+
+    SUserRegister:
+      type: object
+      required: [username, email, password, password_confirm]
+      properties:
+        username: { type: string, minLength: 1 }
+        email: { type: string, format: email }
+        password: { type: string }
+        password_confirm: { type: string }
+
+    SUserLogin:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+
+    SUserUpdate:
+      type: object
+      description: "Частичное обновление. Хотя бы одно поле обязательно."
+      properties:
+        username: { type: string, minLength: 1, maxLength: 50 }
+        email: { type: string, format: email }
+        avatar_id: { type: integer, nullable: true }
+        bio: { type: string, maxLength: 500, nullable: true }
+        birth_date: { type: string, format: date, nullable: true }
+        gender: { type: string, enum: [male, female], nullable: true }
+        company: { $ref: '#/components/schemas/SCompany' }
+        financials: { $ref: '#/components/schemas/SFinancials' }
+        credit_history: { $ref: '#/components/schemas/SCreditHistory' }
+
+    SUser:
+      type: object
+      required: [id, username, email, role, created_at]
+      properties:
+        id: { type: integer }
+        username: { type: string }
+        email: { type: string, format: email }
+        role: { type: string, enum: [user, admin] }
+        avatar_id: { type: integer, nullable: true }
+        bio: { type: string, nullable: true }
+        birth_date: { type: string, format: date, nullable: true }
+        gender: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        company: { allOf: [{ $ref: '#/components/schemas/SCompany' }], nullable: true }
+        financials: { allOf: [{ $ref: '#/components/schemas/SFinancials' }], nullable: true }
+        credit_history: { allOf: [{ $ref: '#/components/schemas/SCreditHistory' }], nullable: true }
+
+    SUserListResponse:
+      type: object
+      required: [users]
+      properties:
+        users:
+          type: array
+          items: { $ref: '#/components/schemas/SUser' }
+        next_cursor: { type: string, nullable: true }
+        previous_cursor: { type: string, nullable: true }
+
+    RegisterResponse:
+      type: object
+      required: [success, user_id, message]
+      properties:
+        success: { type: boolean }
+        user_id: { type: integer }
+        message: { type: string }
+
+    LoginResponse:
+      type: object
+      required: [success, message, access_token, refresh_token, token_type]
+      properties:
+        success: { type: boolean }
+        message: { type: string }
+        access_token: { type: string }
+        refresh_token: { type: string }
+        token_type: { type: string }
+
+    RefreshResponse:
+      type: object
+      required: [access_token, token_type]
+      properties:
+        access_token: { type: string }
+        token_type: { type: string }
+
+    LogoutResponse:
+      type: object
+      required: [success]
+      properties:
+        success: { type: boolean }
+
+    # ============================================================
+    # FILES
+    # ============================================================
+
+    SFileResponse:
+      type: object
+      required: [id, object_key, original_name, size, uploaded_by, created_at]
+      properties:
+        id: { type: integer }
+        object_key: { type: string }
+        original_name: { type: string }
+        size: { type: integer }
+        uploaded_by: { type: integer }
+        content_type: { type: string, nullable: true }
+        extension: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    # ============================================================
+    # PRODUCTS
+    # ============================================================
+
+    SProductResponse:
+      type: object
+      required:
+        [id, code, name, description, product_type, segment,
+         min_amount_rub, max_amount_rub, min_term_months, max_term_months,
+         rate_min_percent, rate_max_percent, purposes, features, requirements,
+         extras, display_order, created_at, updated_at]
+      properties:
+        id: { type: integer }
+        code: { type: string, example: working_capital }
+        name: { type: string, example: Оборотный кредит }
+        description: { type: string }
+        product_type: { type: string, enum: [microloan, term_loan, overdraft, credit_line, leasing] }
+        segment: { type: string, enum: [micro, small, both] }
+        min_amount_rub: { type: integer }
+        max_amount_rub: { type: integer }
+        min_term_months: { type: integer }
+        max_term_months: { type: integer }
+        rate_min_percent: { type: number }
+        rate_max_percent: { type: number }
+        purposes:
+          type: array
+          items: { type: string, enum: [working_capital, equipment, expansion, refinancing, other] }
+        features:
+          type: array
+          items: { type: string }
+        requirements:
+          type: array
+          items: { type: string }
+        extras:
+          type: object
+          additionalProperties: true
+        display_order: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    SProductListResponse:
+      type: object
+      required: [products]
+      properties:
+        products:
+          type: array
+          items: { $ref: '#/components/schemas/SProductResponse' }
+
+    # ============================================================
+    # APPLICATIONS (публичные)
+    # ============================================================
+
+    SApplicationCreateRequest:
+      type: object
+      description: |
+        Тело `POST /applications`. `product_type` опционален.
+        Если профиль уже заполнен через `PATCH /auth/me`, блоки `company`/`financials`/`credit_history`
+        можно не передавать. Иначе они обязательны — иначе `400`.
+      required: [requested_amount_rub, term_months, purpose, segment]
+      properties:
+        product_type:
+          type: string
+          enum: [microloan, term_loan, overdraft, credit_line, leasing]
+          nullable: true
+        requested_amount_rub: { type: integer, minimum: 0 }
+        term_months: { type: integer, minimum: 1 }
+        purpose: { type: string, enum: [working_capital, equipment, expansion, refinancing, other] }
+        segment: { type: string, enum: [micro, small] }
+        company: { $ref: '#/components/schemas/SCompany' }
+        financials: { $ref: '#/components/schemas/SFinancials' }
+        credit_history: { $ref: '#/components/schemas/SCreditHistory' }
+
+    SApplication:
+      type: object
+      required: [product_type, requested_amount_rub, term_months, purpose, segment, submitted_at]
+      properties:
+        product_type: { type: string, enum: [microloan, term_loan, overdraft, credit_line, leasing] }
+        requested_amount_rub: { type: integer, minimum: 0 }
+        term_months: { type: integer, minimum: 1 }
+        purpose: { type: string, enum: [working_capital, equipment, expansion, refinancing, other] }
+        segment: { type: string, enum: [micro, small] }
+        submitted_at: { type: string, format: date-time }
+
+    SCompany:
+      type: object
+      required: [inn, ogrn, legal_name, legal_form, okved, region, registration_date, employee_count]
+      properties:
+        inn: { type: string, minLength: 10, maxLength: 12 }
+        ogrn: { type: string, minLength: 13, maxLength: 15 }
+        legal_name: { type: string }
+        legal_form: { type: string, enum: [llc, individual_entrepreneur, joint_stock_company] }
+        okved: { type: string }
+        region: { type: string }
+        registration_date: { type: string, format: date-time }
+        employee_count: { type: integer, minimum: 0 }
+
+    SFinancials:
+      type: object
+      required:
+        [annual_revenue_rub, annual_net_profit_rub, ebitda_rub, total_debt_rub,
+         monthly_revenue_rub, monthly_expenses_rub, accounts_receivable_rub,
+         cash_balance_rub, period_end]
+      properties:
+        annual_revenue_rub: { type: integer, minimum: 0 }
+        annual_net_profit_rub: { type: integer }
+        ebitda_rub: { type: integer }
+        total_debt_rub: { type: integer, minimum: 0 }
+        monthly_revenue_rub: { type: integer, minimum: 0 }
+        monthly_expenses_rub: { type: integer, minimum: 0 }
+        accounts_receivable_rub: { type: integer, minimum: 0 }
+        cash_balance_rub: { type: integer, minimum: 0 }
+        period_end: { type: string, format: date-time }
+
+    SCreditHistory:
+      type: object
+      required:
+        [active_obligations_count, total_outstanding_rub, monthly_debt_payments_rub,
+         max_days_past_due_12m, has_current_past_due, credit_utilization,
+         closed_obligations_count, applications_last_6m]
+      properties:
+        active_obligations_count: { type: integer, minimum: 0 }
+        total_outstanding_rub: { type: integer, minimum: 0 }
+        monthly_debt_payments_rub: { type: integer, minimum: 0 }
+        max_days_past_due_12m: { type: integer, minimum: 0, maximum: 365 }
+        has_current_past_due: { type: boolean }
+        credit_utilization: { type: number, minimum: 0, maximum: 1 }
+        closed_obligations_count: { type: integer, minimum: 0 }
+        applications_last_6m: { type: integer, minimum: 0 }
+
+    SReasonCode:
+      type: object
+      required: [code, description, feature, impact, contribution]
+      properties:
+        code: { type: string }
+        description: { type: string }
+        feature: { type: string }
+        impact: { type: string, enum: [positive, negative, neutral] }
+        contribution: { type: number }
+
+    SDecisionCondition:
+      type: object
+      required: [code, description, recommended_amount_rub]
+      properties:
+        code: { type: string }
+        description: { type: string }
+        recommended_amount_rub: { type: integer }
+
+    SDecisionResult:
+      type: object
+      required: [decision]
+      properties:
+        decision: { type: string, enum: [approve, approve_with_conditions, manual_review, decline] }
+        reason_codes:
+          type: array
+          items: { type: string }
+        conditions:
+          type: array
+          items: { $ref: '#/components/schemas/SDecisionCondition' }
+
+    SScoreApplicationResponse:
+      type: object
+      required: [application_id, score, pd, risk_grade, reason_codes, model_version]
+      properties:
+        application_id: { type: string, description: 32-символьная hex-строка }
+        score: { type: integer, minimum: 0, maximum: 1000 }
+        pd: { type: number, minimum: 0, maximum: 1 }
+        risk_grade: { type: string, enum: [A, B, C, D, E] }
+        reason_codes:
+          type: array
+          items: { $ref: '#/components/schemas/SReasonCode' }
+        model_version: { type: string }
+        scored_at: { type: string, format: date-time, nullable: true }
+        decision: { allOf: [{ $ref: '#/components/schemas/SDecisionResult' }], nullable: true }
+
+    SApplicationEventResponse:
+      type: object
+      required: [id, event_type, created_at]
+      properties:
+        id: { type: integer }
+        event_type: { type: string, enum: [created, enriched, scored, status_changed, failed] }
+        payload:
+          type: object
+          additionalProperties: true
+          nullable: true
+        created_at: { type: string, format: date-time }
+
+    SApplicationDetail:
+      type: object
+      required:
+        [application_id, status, created_at, updated_at,
+         application, company, financials, credit_history]
+      properties:
+        application_id: { type: string }
+        status:
+          type: string
+          enum: [pending, confirmed, different, declined, failed]
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        application: { $ref: '#/components/schemas/SApplication' }
+        company: { $ref: '#/components/schemas/SCompany' }
+        financials: { $ref: '#/components/schemas/SFinancials' }
+        credit_history: { $ref: '#/components/schemas/SCreditHistory' }
+        scoring_result: { allOf: [{ $ref: '#/components/schemas/SScoreApplicationResponse' }], nullable: true }
+        enriched_data:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: "Снимок ответов моков: {egrul, fns, bki}, упавший = null"
+        explanation: { type: string, nullable: true }
+
+    SApplicationListResponse:
+      type: object
+      required: [applications]
+      properties:
+        applications:
+          type: array
+          items: { $ref: '#/components/schemas/SApplicationDetail' }
+        next_cursor: { type: string, nullable: true }
+        previous_cursor: { type: string, nullable: true }
+
+    # ============================================================
+    # SCORING (auxiliary)
+    # ============================================================
+
+    SScoreApplicationRequest:
+      type: object
+      required: [application, company, financials, credit_history]
+      properties:
+        application: { $ref: '#/components/schemas/SApplication' }
+        company: { $ref: '#/components/schemas/SCompany' }
+        financials: { $ref: '#/components/schemas/SFinancials' }
+        credit_history: { $ref: '#/components/schemas/SCreditHistory' }
+
+    SBatchScoreApplicationsRequest:
+      type: object
+      required: [applications]
+      properties:
+        applications:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: '#/components/schemas/SScoreApplicationRequest' }
+
+    SBatchScoreApplicationsResponse:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items: { $ref: '#/components/schemas/SScoreApplicationResponse' }
+
+    SModelInfoResponse:
+      type: object
+      required: [model_version, model_type]
+      properties:
+        model_version: { type: string }
+        model_type: { type: string }
+        trained_at: { type: string, format: date-time, nullable: true }
+        features:
+          type: array
+          items: { type: string }
+        metrics:
+          type: object
+          additionalProperties: { type: number }
+
+    # ============================================================
+    # ADMIN
+    # ============================================================
+
+    SAdminApplicationListResponse:
+      type: object
+      required: [applications]
+      properties:
+        applications:
+          type: array
+          items: { $ref: '#/components/schemas/SApplicationDetail' }
+        next_cursor: { type: string, nullable: true }
+        previous_cursor: { type: string, nullable: true }
+
+    SAdminStatsResponse:
+      type: object
+      required: [total, by_status, by_product_type, by_risk_grade]
+      properties:
+        total: { type: integer }
+        by_status:
+          type: object
+          additionalProperties: { type: integer }
+        by_product_type:
+          type: object
+          additionalProperties: { type: integer }
+        by_risk_grade:
+          type: object
+          additionalProperties: { type: integer }
+        avg_score: { type: number, nullable: true }
+
+    # ============================================================
+    # MOCK
+    # ============================================================
+
+    SEgrulResponse:
+      type: object
+      required:
+        [inn, ogrn, legal_name, legal_form, status, okved, okved_description,
+         region, registration_date, employee_count, director, address]
+      properties:
+        inn: { type: string }
+        ogrn: { type: string }
+        legal_name: { type: string }
+        legal_form: { type: string, enum: [llc, individual_entrepreneur, joint_stock_company] }
+        status: { type: string, example: active }
+        okved: { type: string }
+        okved_description: { type: string }
+        region: { type: string }
+        registration_date: { type: string, format: date-time }
+        employee_count: { type: integer }
+        director: { type: string }
+        address: { type: string }
+
+    SFnsResponse:
+      type: object
+      required:
+        [inn, tax_regime, tax_debt_rub, disqualified_persons, mass_address,
+         mass_director, reliability_score, last_reporting_date]
+      properties:
+        inn: { type: string }
+        tax_regime: { type: string, enum: [УСН, ОСН, ПАТЕНТ, ЕСХН] }
+        tax_debt_rub: { type: integer, minimum: 0 }
+        disqualified_persons: { type: boolean }
+        mass_address: { type: boolean }
+        mass_director: { type: boolean }
+        reliability_score: { type: integer, minimum: 0, maximum: 100 }
+        last_reporting_date: { type: string, format: date-time }
+
+    SBkiResponse:
+      type: object
+      required:
+        [inn, credit_score, active_obligations_count, total_outstanding_rub,
+         monthly_debt_payments_rub, max_days_past_due_12m, has_current_past_due,
+         credit_utilization, closed_obligations_count, applications_last_6m, last_update]
+      properties:
+        inn: { type: string }
+        credit_score: { type: integer, minimum: 300, maximum: 850 }
+        active_obligations_count: { type: integer, minimum: 0 }
+        total_outstanding_rub: { type: integer, minimum: 0 }
+        monthly_debt_payments_rub: { type: integer, minimum: 0 }
+        max_days_past_due_12m: { type: integer, minimum: 0 }
+        has_current_past_due: { type: boolean }
+        credit_utilization: { type: number, minimum: 0, maximum: 1 }
+        closed_obligations_count: { type: integer, minimum: 0 }
+        applications_last_6m: { type: integer, minimum: 0 }
+        last_update: { type: string, format: date-time }
+
+    # ============================================================
+    # COMMON
+    # ============================================================
+
+    ErrorResponse:
+      type: object
+      required: [detail]
+      properties:
+        detail: { type: string }
+
+    ValidationErrorResponse:
+      type: object
+      required: [detail]
+      properties:
+        detail: { type: string }
+
+    SuccessResponse:
+      type: object
+      required: [detail]
+      properties:
+        detail: { type: string }
+
+  responses:
+    Unauthorized:
+      description: Не авторизован
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Forbidden:
+      description: Недостаточно прав
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    NotFound:
+      description: Объект не найден
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    BadRequest:
+      description: Ошибка валидации запроса
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ValidationErrorResponse' }
+    InternalError:
+      description: Внутренняя ошибка сервера
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    BadGateway:
+      description: Ошибка внешнего сервиса
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    GatewayTimeout:
+      description: Таймаут внешнего сервиса
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+paths:
+
+  # ============================================================
+  # AUTH (без изменений)
+  # ============================================================
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Регистрация
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SUserRegister' }
+      responses:
+        '201':
+          description: Пользователь зарегистрирован
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RegisterResponse' }
+        '400':
+          description: Email уже занят
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ValidationErrorResponse' }
+        '422': { description: Ошибка валидации }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Вход
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SUserLogin' }
+      responses:
+        '200':
+          description: Успешный вход
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Обновить access токен
+      security: []
+      parameters:
+        - name: refresh_token
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Новый access_token
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RefreshResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Выход
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Выход выполнен
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LogoutResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Профиль текущего пользователя
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Профиль
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SUser' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    patch:
+      tags: [Auth]
+      summary: Обновить профиль
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SUserUpdate' }
+      responses:
+        '200':
+          description: Обновлённый профиль
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SUser' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /auth/users:
+    get:
+      tags: [Auth]
+      summary: Список пользователей (пагинация)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: cursor, in: query, schema: { type: string, nullable: true } }
+        - { name: direction, in: query, schema: { type: string, enum: [forward, backward], default: forward } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 10 } }
+      responses:
+        '200':
+          description: Страница пользователей
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SUserListResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ============================================================
+  # FILES (без изменений)
+  # ============================================================
+
+  /files/:
+    post:
+      tags: [Files]
+      summary: Загрузить файл
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '201':
+          description: Файл сохранён
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SFileResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '502': { $ref: '#/components/responses/BadGateway' }
+
+  /files/{file_id}:
+    get:
+      tags: [Files]
+      summary: Скачать файл (с Range)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: file_id, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200': { description: Полный файл }
+        '206': { description: Частичное содержимое }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '416': { description: Невалидный Range }
+        '502': { $ref: '#/components/responses/BadGateway' }
+    delete:
+      tags: [Files]
+      summary: Удалить файл
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: file_id, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: Файл удалён
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuccessResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '502': { $ref: '#/components/responses/BadGateway' }
+
+  /files/{file_id}/info:
+    get:
+      tags: [Files]
+      summary: Метаданные файла
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: file_id, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: Метаданные
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SFileResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ============================================================
+  # PRODUCTS (публичные)
+  # ============================================================
+
+  /products:
+    get:
+      tags: [Products]
+      summary: Каталог активных продуктов
+      security: []
+      responses:
+        '200':
+          description: Список продуктов
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SProductListResponse' }
+
+  /products/{code}:
+    get:
+      tags: [Products]
+      summary: Детали продукта по slug
+      security: []
+      parameters:
+        - { name: code, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Продукт
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SProductResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ============================================================
+  # APPLICATIONS
+  # ============================================================
+
+  /applications:
+    post:
+      tags: [Applications]
+      summary: Создать заявку
+      description: |
+        1. Валидация профиля (или заполнение из тела запроса).
+        2. Обогащение через `/mock/*`.
+        3. Отправка в ML-сервис по gRPC.
+        4. Маппинг `decision → status`.
+        5. WebSocket-уведомление.
+
+        На ошибке ML заявка остаётся с `status=failed`, ответ `502`.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SApplicationCreateRequest' }
+      responses:
+        '201':
+          description: Заявка создана и обработана
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SApplicationDetail' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { description: Ошибка валидации Pydantic }
+        '502': { $ref: '#/components/responses/BadGateway' }
+        '504': { $ref: '#/components/responses/GatewayTimeout' }
+    get:
+      tags: [Applications]
+      summary: Список своих заявок
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: cursor, in: query, schema: { type: string, nullable: true } }
+        - { name: direction, in: query, schema: { type: string, enum: [forward, backward], default: forward } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 10 } }
+      responses:
+        '200':
+          description: Страница заявок
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SApplicationListResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /applications/{application_id}:
+    get:
+      tags: [Applications]
+      summary: Детали заявки
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: application_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Заявка
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SApplicationDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /applications/{application_id}/events:
+    get:
+      tags: [Applications]
+      summary: История событий по заявке
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: application_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Список событий
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SApplicationEventResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ============================================================
+  # SCORING (auxiliary)
+  # ============================================================
+
+  /scoring/batch:
+    post:
+      tags: [Scoring (aux)]
+      summary: Пакетный скоринг (без сохранения)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SBatchScoreApplicationsRequest' }
+      responses:
+        '200':
+          description: Результаты
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SBatchScoreApplicationsResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '502': { $ref: '#/components/responses/BadGateway' }
+        '504': { $ref: '#/components/responses/GatewayTimeout' }
+
+  /scoring/model-info:
+    get:
+      tags: [Scoring (aux)]
+      summary: Информация о модели
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Информация
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SModelInfoResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '502': { $ref: '#/components/responses/BadGateway' }
+        '504': { $ref: '#/components/responses/GatewayTimeout' }
+
+  # ============================================================
+  # ADMIN
+  # ============================================================
+
+  /admin/applications:
+    get:
+      tags: [Admin]
+      summary: Все заявки (только admin)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: cursor, in: query, schema: { type: string, nullable: true } }
+        - { name: direction, in: query, schema: { type: string, enum: [forward, backward], default: forward } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 10 } }
+      responses:
+        '200':
+          description: Страница заявок
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SAdminApplicationListResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/stats/overview:
+    get:
+      tags: [Admin]
+      summary: Агрегированная статистика (только admin)
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Статистика
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SAdminStatsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ============================================================
+  # MOCK
+  # ============================================================
+
+  /mock/egrul/{inn}:
+    get:
+      tags: [Mock]
+      summary: Мок ЕГРЮЛ
+      security: []
+      parameters:
+        - { name: inn, in: path, required: true, schema: { type: string } }
+        - { name: fail, in: query, schema: { type: boolean, default: false } }
+      responses:
+        '200':
+          description: Реквизиты
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SEgrulResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /mock/fns/{inn}:
+    get:
+      tags: [Mock]
+      summary: Мок ФНС
+      security: []
+      parameters:
+        - { name: inn, in: path, required: true, schema: { type: string } }
+        - { name: fail, in: query, schema: { type: boolean, default: false } }
+      responses:
+        '200':
+          description: Налоговые данные
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SFnsResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /mock/bki/{inn}:
+    get:
+      tags: [Mock]
+      summary: Мок БКИ
+      security: []
+      parameters:
+        - { name: inn, in: path, required: true, schema: { type: string } }
+        - { name: fail, in: query, schema: { type: boolean, default: false } }
+      responses:
+        '200':
+          description: Кредитная история
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SBkiResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }

@@ -6,7 +6,8 @@ from schemas.base import ValidationErrorResponse, ErrorResponse
 from schemas.auth import (
     LoginResponse, LogoutResponse, SUserRegister,
     RefreshResponse, RegisterResponse, SUser,
-    SUserLogin, SUserUpdate, SUserListResponse
+    SUserLogin, SUserUpdate, SUserListResponse,
+    user_orm_to_schema
 )
 from utils.security import create_access_token, get_current_user, oauth2_scheme
 from utils.pagination import encode_cursor, decode_cursor
@@ -181,18 +182,14 @@ async def logout(
 async def get_current_user_info(current_user: UserOrm = Depends(get_current_user)):
     """
     Получение информации о текущем пользователе.
-    
+
     Возвращает данные пользователя из базы данных.
     Требует валидный access токен.
     """
     try:
-        return SUser.model_validate(current_user)
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail="Внутренняя ошибка сервера"
-        )
+        return user_orm_to_schema(current_user)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Внутренняя ошибка сервера")
 
 
 @router.patch(
@@ -211,25 +208,26 @@ async def update_current_user(
 ):
     """
     Обновление данных текущего пользователя.
-    Можно передать только те поля, которые требуется изменить.
+
+    Можно передать только те поля, которые требуется изменить,
+    включая профиль компании, финансов и кредитной истории.
     """
-    # Передаём только те поля, которые не None
     cleaned_data = update_data.model_dump(exclude_none=True)
 
     try:
         updated_user = await UserRepository.update_user(
             user_id=current_user.id,
-            update_data=cleaned_data
+            update_data=cleaned_data,
         )
-        return updated_user
+        return user_orm_to_schema(updated_user)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except ObjectNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except StorageError as e:
         raise HTTPException(status_code=502, detail=f"Ошибка хранилища: {str(e)}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Внутренняя ошибка сервера: {str(e)}")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Внутренняя ошибка сервера")
 
 
 @router.get(
@@ -247,13 +245,12 @@ async def get_users(
     limit: int = 10,
     current_user: UserOrm = Depends(get_current_user)
 ):
-    """Получение списка пользователей с пагинацией (курсорная)."""
-    # Валидация limit
+    """Получение списка пользователей с пагинацией (курсорная)"""
     if limit < 1 or limit > 50:
         raise HTTPException(status_code=400, detail="Лимит должен быть от 1 до 50")
     if direction not in ("forward", "backward"):
         raise HTTPException(status_code=400, detail="Недопустимое направление")
-    
+
     cursor_id = None
     if cursor:
         cursor_id = decode_cursor(cursor)
@@ -264,13 +261,13 @@ async def get_users(
         users, next_id, prev_id = await UserRepository.get_users_paginated(
             cursor_id=cursor_id,
             direction=direction,
-            limit=limit
+            limit=limit,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
     return SUserListResponse(
-        users=[SUser.model_validate(u) for u in users],
+        users=[user_orm_to_schema(u) for u in users],
         next_cursor=encode_cursor(next_id) if next_id else None,
-        previous_cursor=encode_cursor(prev_id) if prev_id else None
+        previous_cursor=encode_cursor(prev_id) if prev_id else None,
     )

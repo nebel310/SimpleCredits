@@ -4,7 +4,7 @@ from google.protobuf.timestamp_pb2 import Timestamp
 
 from ml_grpc.generated.simplecredits.scoring.v1 import scoring_pb2
 
-from schemas.scoring import (
+from schemas.applications import (
     SApplication,
     SCompany,
     SCreditHistory,

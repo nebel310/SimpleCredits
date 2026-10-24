@@ -1,3 +1,8 @@
+import asyncio
+import socket
+
+import uvicorn
+
 from datetime import datetime, timezone
 
 import pytest_asyncio
@@ -79,8 +84,10 @@ class FakeScoringServicer(scoring_pb2_grpc.ScoringServiceServicer):
 
 
 @pytest_asyncio.fixture
-async def e2e_client():
+async def e2e_client(db_schema):
     """HTTP-клиент поверх настоящего FastAPI-приложения с фейковым ML"""
+    from repositories.products import ProductRepository
+
     server = aio.server()
     servicer = FakeScoringServicer()
     scoring_pb2_grpc.add_ScoringServiceServicer_to_server(servicer, server)
@@ -93,9 +100,49 @@ async def e2e_client():
     from main import app
     app.state.scoring_client = scoring_client
 
+    await ProductRepository.ensure_products()
+
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         yield client, servicer
 
     await scoring_client.close()
     await server.stop(0)
+
+
+def _free_port() -> int:
+    """Возвращает свободный TCP-порт"""
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+@pytest_asyncio.fixture
+async def real_server(e2e_client, monkeypatch):
+    """Поднимает реальный uvicorn с main.app для WebSocket-тестов"""
+    from main import app
+    from minio.client import s3_client
+
+    async def noop_ensure_bucket():
+        return None
+
+    monkeypatch.setattr(s3_client, "ensure_bucket", noop_ensure_bucket)
+
+    _, servicer = e2e_client
+    fake_client = app.state.scoring_client
+
+    port = _free_port()
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    server = uvicorn.Server(config)
+    serve_task = asyncio.create_task(server.serve())
+
+    while not server.started:
+        await asyncio.sleep(0.05)
+
+    app.state.scoring_client = fake_client
+
+    try:
+        yield f"http://127.0.0.1:{port}", servicer
+    finally:
+        server.should_exit = True
+        await serve_task

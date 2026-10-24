@@ -11,10 +11,13 @@ LegalForm = Literal["llc", "individual_entrepreneur", "joint_stock_company"]
 RiskGrade = Literal["A", "B", "C", "D", "E"]
 Decision = Literal["approve", "approve_with_conditions", "manual_review", "decline"]
 ReasonImpact = Literal["positive", "negative", "neutral"]
+ApplicationStatus = Literal["pending", "failed", "confirmed", "different", "declined"]
+
+DEFAULT_PRODUCT_TYPE: ProductType = "term_loan"
 
 
 class SApplication(BaseModel):
-    """Параметры кредитной заявки"""
+    """Параметры кредитной заявки для ML-сервиса"""
     product_type: ProductType
     requested_amount_rub: int = Field(..., ge=0)
     term_months: int = Field(..., ge=1)
@@ -67,54 +70,6 @@ class SScoreApplicationRequest(BaseModel):
     financials: SFinancials
     credit_history: SCreditHistory
 
-    model_config = ConfigDict(
-        json_schema_extra={
-            "examples": [
-                {
-                    "application": {
-                        "product_type": "term_loan",
-                        "requested_amount_rub": 1500000,
-                        "term_months": 24,
-                        "purpose": "equipment",
-                        "segment": "small",
-                        "submitted_at": "2026-03-15T10:00:00Z"
-                    },
-                    "company": {
-                        "inn": "7701234567",
-                        "ogrn": "1027700132195",
-                        "legal_name": "ООО Ромашка",
-                        "legal_form": "llc",
-                        "okved": "62.01",
-                        "region": "Москва",
-                        "registration_date": "2018-04-12T00:00:00Z",
-                        "employee_count": 25
-                    },
-                    "financials": {
-                        "annual_revenue_rub": 42000000,
-                        "annual_net_profit_rub": 6500000,
-                        "ebitda_rub": 8200000,
-                        "total_debt_rub": 3000000,
-                        "monthly_revenue_rub": 3500000,
-                        "monthly_expenses_rub": 2800000,
-                        "accounts_receivable_rub": 1200000,
-                        "cash_balance_rub": 900000,
-                        "period_end": "2025-12-31T00:00:00Z"
-                    },
-                    "credit_history": {
-                        "active_obligations_count": 2,
-                        "total_outstanding_rub": 3000000,
-                        "monthly_debt_payments_rub": 120000,
-                        "max_days_past_due_12m": 0,
-                        "has_current_past_due": False,
-                        "credit_utilization": 0.35,
-                        "closed_obligations_count": 4,
-                        "applications_last_6m": 1
-                    }
-                }
-            ]
-        }
-    )
-
 
 class SReasonCode(BaseModel):
     """Фактор, повлиявший на скоринговый балл"""
@@ -150,35 +105,6 @@ class SScoreApplicationResponse(BaseModel):
     scored_at: datetime | None = None
     decision: SDecisionResult | None = None
 
-    model_config = ConfigDict(
-        json_schema_extra={
-            "examples": [
-                {
-                    "application_id": "8a3f9c2e1b4d4f5a9c7d6b5a4e3f2d1c",
-                    "score": 712,
-                    "pd": 0.0421,
-                    "risk_grade": "B",
-                    "reason_codes": [
-                        {
-                            "code": "RC001",
-                            "description": "Стабильная кредитная история",
-                            "feature": "max_days_past_due_12m",
-                            "impact": "positive",
-                            "contribution": -0.12
-                        }
-                    ],
-                    "model_version": "v1.0.0",
-                    "scored_at": "2026-03-15T10:00:01Z",
-                    "decision": {
-                        "decision": "approve",
-                        "reason_codes": ["RC001"],
-                        "conditions": []
-                    }
-                }
-            ]
-        }
-    )
-
 
 class SBatchScoreApplicationsRequest(BaseModel):
     """Пакетный запрос скоринга"""
@@ -197,18 +123,43 @@ class SModelInfoResponse(BaseModel):
     trained_at: datetime | None = None
     features: list[str] = []
     metrics: dict[str, float] = {}
-    
-    
+
+
+class SApplicationCreateRequest(BaseModel):
+    """Тело запроса на создание кредитной заявки"""
+    product_type: ProductType | None = None
+    requested_amount_rub: int = Field(..., ge=0)
+    term_months: int = Field(..., ge=1)
+    purpose: FinancingPurpose
+    segment: BusinessSegment
+    company: SCompany | None = None
+    financials: SFinancials | None = None
+    credit_history: SCreditHistory | None = None
+
+
+class SApplicationEventResponse(BaseModel):
+    """Событие по заявке для отображения в таймлайне"""
+    id: int
+    event_type: str
+    payload: dict | None = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class SApplicationDetail(BaseModel):
     """Полные данные заявки с результатом скоринга"""
     application_id: str
-    status: str
+    status: ApplicationStatus
     created_at: datetime
+    updated_at: datetime
     application: SApplication
     company: SCompany
     financials: SFinancials
     credit_history: SCreditHistory
     scoring_result: SScoreApplicationResponse | None = None
+    enriched_data: dict | None = None
+    explanation: str | None = None
 
 
 class SApplicationListResponse(BaseModel):
@@ -218,14 +169,19 @@ class SApplicationListResponse(BaseModel):
     previous_cursor: str | None = None
 
 
-def application_orm_to_schema(application, scoring_result=None) -> SApplicationDetail:
-    """Собирает SApplicationDetail из ORM-моделей заявки и результата скоринга"""
-    detail = SApplicationDetail(
+def application_orm_to_schema(application) -> SApplicationDetail:
+    """Собирает SApplicationDetail из ORM-модели заявки"""
+    scoring_result = None
+    if application.scoring_result is not None:
+        scoring_result = SScoreApplicationResponse.model_validate(application.scoring_result)
+
+    return SApplicationDetail(
         application_id=application.application_id,
         status=application.status,
         created_at=application.created_at,
+        updated_at=application.updated_at,
         application=SApplication(
-            product_type=application.product_type,
+            product_type=application.product_type or DEFAULT_PRODUCT_TYPE,
             requested_amount_rub=application.requested_amount_rub,
             term_months=application.term_months,
             purpose=application.purpose,
@@ -263,30 +219,7 @@ def application_orm_to_schema(application, scoring_result=None) -> SApplicationD
             closed_obligations_count=application.closed_obligations_count,
             applications_last_6m=application.applications_last_6m,
         ),
+        scoring_result=scoring_result,
+        enriched_data=application.enriched_data,
+        explanation=application.explanation,
     )
-
-    if scoring_result is not None:
-        decision = None
-        if scoring_result.decision is not None:
-            decision = SDecisionResult(
-                decision=scoring_result.decision,
-                reason_codes=[],
-                conditions=[
-                    SDecisionCondition(**c) for c in (scoring_result.conditions or [])
-                ],
-            )
-
-        detail.scoring_result = SScoreApplicationResponse(
-            application_id=scoring_result.application_id,
-            score=scoring_result.score,
-            pd=scoring_result.pd,
-            risk_grade=scoring_result.risk_grade,
-            reason_codes=[
-                SReasonCode(**rc) for rc in (scoring_result.reason_codes or [])
-            ],
-            model_version=scoring_result.model_version,
-            scored_at=scoring_result.scored_at,
-            decision=decision,
-        )
-
-    return detail

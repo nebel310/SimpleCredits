@@ -1,13 +1,13 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, JSON
+from sqlalchemy import DateTime, ForeignKey, JSON, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Model
 
 
 class ApplicationOrm(Model):
-    """Модель кредитной заявки с денормализованными данными компании и финансов"""
+    """Модель кредитной заявки со снимком профиля и результатом скоринга"""
     __tablename__ = "applications"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -15,7 +15,7 @@ class ApplicationOrm(Model):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     status: Mapped[str] = mapped_column(nullable=False, default="pending", server_default="pending")
 
-    product_type: Mapped[str] = mapped_column(nullable=False)
+    product_type: Mapped[str | None] = mapped_column(nullable=True)
     requested_amount_rub: Mapped[int] = mapped_column(nullable=False)
     term_months: Mapped[int] = mapped_column(nullable=False)
     purpose: Mapped[str] = mapped_column(nullable=False)
@@ -50,15 +50,24 @@ class ApplicationOrm(Model):
     closed_obligations_count: Mapped[int] = mapped_column(nullable=False)
     applications_last_6m: Mapped[int] = mapped_column(nullable=False)
 
+    enriched_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    scoring_result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
 
 
-class ScoringResultOrm(Model):
-    """Модель результата скоринга по заявке"""
-    __tablename__ = "scoring_results"
+class ApplicationEventOrm(Model):
+    """Модель события по заявке для восстановления таймлайна"""
+    __tablename__ = "application_events"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     application_id: Mapped[str] = mapped_column(
@@ -66,14 +75,8 @@ class ScoringResultOrm(Model):
         nullable=False,
         index=True,
     )
-    score: Mapped[int] = mapped_column(nullable=False)
-    pd: Mapped[float] = mapped_column(nullable=False)
-    risk_grade: Mapped[str] = mapped_column(nullable=False)
-    model_version: Mapped[str] = mapped_column(nullable=False)
-    scored_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    decision: Mapped[str | None] = mapped_column(nullable=True)
-    reason_codes: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    conditions: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    event_type: Mapped[str] = mapped_column(nullable=False)
+    payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
