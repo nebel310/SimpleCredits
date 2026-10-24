@@ -7,10 +7,9 @@ import { Select } from '@alfalab/core-components-select';
 import { Checkbox as AlfaCheckbox } from '@alfalab/core-components-checkbox';
 import { Radio as AlfaRadio } from '@alfalab/core-components-radio';
 import { Switch as AlfaSwitch } from '@alfalab/core-components-switch';
-import type { ApiError, ChanceLevel, DataOrigin, DocStatus, Role } from '../api';
+import type { ApiError } from '../api';
 import { Px, type PxName } from './Px';
-import { ROLE_NAME, TRACK, type BannerKind } from '../lib/status';
-import { date } from '../lib/format';
+import { TRACK, type BannerKind } from '../lib/labels';
 
 // ───── Кнопки (core-components Button) ─────
 
@@ -92,6 +91,9 @@ export function TextField(props: {
   inputMode?: 'numeric' | 'text';
   right?: ReactNode;
   id?: string;
+  type?: 'text' | 'email' | 'password';
+  autoComplete?: string;
+  name?: string;
 }) {
   return (
     <Input
@@ -108,26 +110,33 @@ export function TextField(props: {
       inputMode={props.inputMode}
       rightAddons={props.right}
       id={props.id}
+      type={props.type}
+      autoComplete={props.autoComplete}
+      name={props.name}
     />
   );
 }
 
-export function MoneyField(props: { label: string; value: number | null; onChange: (v: number | null) => void; hint?: ReactNode; error?: string | null; disabled?: boolean }) {
-  const [text, setText] = useState(props.value === null ? '' : formatInt(props.value));
+/** Поле суммы в рублях. signed — можно ввести минус (например, убыток) */
+export function MoneyField(props: { label: string; value: number | null; onChange: (v: number | null) => void; hint?: ReactNode; error?: string | null; disabled?: boolean; signed?: boolean }) {
+  const show = (n: number | null) => (n === null ? '' : (n < 0 ? '−' : '') + formatInt(Math.abs(n)));
+  const [text, setText] = useState(show(props.value));
   useEffect(() => {
-    const parsed = parseInt(text.replace(/\D/g, ''), 10);
-    if ((isNaN(parsed) ? null : parsed) !== props.value) setText(props.value === null ? '' : formatInt(props.value));
+    const digits = text.replace(/\D/g, '');
+    const parsed = digits ? Number(digits) * (/^[-−]/.test(text) ? -1 : 1) : null;
+    if (parsed !== props.value) setText(show(props.value));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.value]);
   return (
     <TextField
       label={props.label}
       value={text}
-      inputMode="numeric"
+      inputMode={props.signed ? 'text' : 'numeric'}
       onChange={(v) => {
-        const digits = v.replace(/\D/g, '').slice(0, 10);
-        setText(digits ? formatInt(Number(digits)) : '');
-        props.onChange(digits ? Number(digits) : null);
+        const neg = !!props.signed && /^\s*[-−]/.test(v);
+        const digits = v.replace(/\D/g, '').slice(0, 12);
+        setText((neg ? '−' : '') + (digits ? formatInt(Number(digits)) : ''));
+        props.onChange(digits ? Number(digits) * (neg ? -1 : 1) : null);
       }}
       hint={props.hint}
       error={props.error}
@@ -178,6 +187,18 @@ export function Toggle(props: { checked: boolean; onChange: (v: boolean) => void
   return <AlfaSwitch checked={props.checked} onChange={(_, { checked }) => props.onChange(checked)} label={props.label} disabled={props.disabled} />;
 }
 
+/** Дата в формате ГГГГ-ММ-ДД (нативный календарь браузера) */
+export function DateField({ label, value, onChange, error }: { label: string; value: string; onChange: (v: string) => void; error?: string | null }) {
+  const id = `d-${label.replace(/\s+/g, '-')}`;
+  return (
+    <div className="field date-field">
+      <label htmlFor={id}>{label}</label>
+      <input id={id} type="date" className={`native${error ? ' bad' : ''}`} value={value} onChange={(e) => onChange(e.target.value)} />
+      {error && <span className="err">{error}</span>}
+    </div>
+  );
+}
+
 export function Field({ label, children, hint, error }: { label: string; children: ReactNode; hint?: ReactNode; error?: string | null }) {
   return (
     <div className="field">
@@ -194,14 +215,6 @@ export function Chip({ kind = 'neutral', children }: { kind?: 'high' | 'mid' | '
   return <span className={`chip ${kind}`}>{children}</span>;
 }
 
-export const LEVEL: Record<ChanceLevel, { label: string; fill: string; chip: 'high' | 'mid' | 'low' | 'neutral'; icon: PxName }> = {
-  high: { label: 'Высокий шанс', fill: 'var(--c-high)', chip: 'high', icon: 'check' },
-  mid: { label: 'Средний шанс', fill: 'var(--c-mid)', chip: 'mid', icon: 'up' },
-  low: { label: 'Низкий шанс', fill: 'var(--c-negative)', chip: 'low', icon: 'alert' },
-  blocked: { label: 'Сейчас недоступно', fill: 'var(--c-negative)', chip: 'low', icon: 'alert' },
-  unknown: { label: 'Не рассчитано', fill: 'var(--c-gray)', chip: 'neutral', icon: 'wait' },
-};
-
 export function Meter({ value, color }: { value: number | null; color: string }) {
   const on = value === null ? 0 : Math.round(value / 10);
   return (
@@ -211,27 +224,6 @@ export function Meter({ value, color }: { value: number | null; color: string })
       ))}
     </div>
   );
-}
-
-export function SourceTag({ origin, text }: { origin: DataOrigin; text?: string }) {
-  const names: Record<DataOrigin, string> = { bank: 'Данные банка', registry: 'Реестр ФНС', client: 'Вы указали', file: 'Из файла' };
-  return <span className={`src-tag ${origin}`}>{text ?? names[origin]}</span>;
-}
-
-export const DOC_STATUS: Record<DocStatus, { label: string; kind: 'high' | 'mid' | 'low' | 'neutral' | 'attention' }> = {
-  required: { label: 'Требуется', kind: 'attention' },
-  uploaded: { label: 'Загружен', kind: 'neutral' },
-  extracting: { label: 'Распознаём', kind: 'mid' },
-  check: { label: 'Проверьте поля', kind: 'attention' },
-  review: { label: 'На проверке', kind: 'mid' },
-  accepted: { label: 'Принят', kind: 'high' },
-  rejected: { label: 'Исправить', kind: 'low' },
-  expired: { label: 'Срок истёк', kind: 'low' },
-};
-
-export function DocumentStatus({ status }: { status: DocStatus }) {
-  const m = DOC_STATUS[status];
-  return <Chip kind={m.kind}>{m.label}</Chip>;
 }
 
 // ───── Трекер ─────
@@ -257,7 +249,7 @@ export function Tracker({ index, stop, waiting, labels = TRACK, sub }: { index: 
 // ───── StatusBanner ─────
 
 export function StatusBanner({ kind, icon, chip, title, children, actions, facts }: { kind: BannerKind; icon?: PxName; chip?: ReactNode; title: ReactNode; children?: ReactNode; actions?: ReactNode; facts?: { label: string; value: ReactNode }[] }) {
-  const color = kind === 'success' ? 'var(--c-high)' : kind === 'error' || kind === 'decline' ? 'var(--c-negative)' : kind === 'action' ? 'var(--c-red)' : kind === 'dark' ? 'var(--c-lime)' : 'var(--c-mid)';
+  const color = kind === 'success' ? 'var(--c-high)' : kind === 'error' || kind === 'decline' ? 'var(--c-negative)' : kind === 'action' ? 'var(--c-red)' : 'var(--c-mid)';
   return (
     <section className={`banner ${kind}`} aria-live="polite">
       <div style={{ flex: '1 1 560px', minWidth: 0 }}>
@@ -281,7 +273,7 @@ export function StatusBanner({ kind, icon, chip, title, children, actions, facts
   );
 }
 
-// ───── Пустые, ошибки, права ─────
+// ───── Пустые состояния и ошибки ─────
 
 export function EmptyState({ title, text, action }: { title: string; text?: string; action?: ReactNode }) {
   return (
@@ -311,18 +303,6 @@ export function ErrorState({ error, onRetry, saved }: { error: ApiError | string
   );
 }
 
-export function RoleGuard({ allowed, role, children, what }: { allowed: boolean; role: Role; children: ReactNode; what: string }) {
-  if (allowed) return <>{children}</>;
-  return (
-    <div className="lock-box">
-      <Px name="lock" size={20} color="var(--c-gray)" />
-      <span>
-        {what} может владелец. Вы вошли как <b>{ROLE_NAME[role].toLowerCase()}</b>.
-      </span>
-    </div>
-  );
-}
-
 export function Loading({ lines = 3 }: { lines?: number }) {
   return (
     <div className="card" aria-busy="true" aria-label="Загрузка">
@@ -330,20 +310,6 @@ export function Loading({ lines = 3 }: { lines?: number }) {
         <div key={i} className="skeleton" style={{ height: i === 0 ? 28 : 16, width: i === 0 ? '40%' : `${90 - i * 12}%` }} />
       ))}
     </div>
-  );
-}
-
-export function AiHint({ children, title = 'Подсказка ИИ', source, action }: { children: ReactNode; title?: string; source?: string; action?: ReactNode }) {
-  return (
-    <section className="ai-hint">
-      <div className="ttl">
-        <Px name="gem" size={18} color="var(--c-ai)" />
-        {title}
-      </div>
-      <p>{children}</p>
-      {source && <span className="ai-src">Источник: {source}</span>}
-      {action}
-    </section>
   );
 }
 
@@ -402,70 +368,6 @@ export function Toasts() {
           {t.text}
         </div>
       ))}
-    </div>
-  );
-}
-
-// ───── Загрузка файла ─────
-
-export function FileDrop({ onFile, formats, maxMb, disabled, label = 'Перетащите файл сюда или выберите на компьютере' }: { onFile: (f: File) => void; formats: string[]; maxMb: number; disabled?: boolean; label?: string }) {
-  const [over, setOver] = useState(false);
-  const input = useRef<HTMLInputElement>(null);
-  return (
-    <div
-      className={`drop ${over ? 'over' : ''}`}
-      onDragOver={(e) => {
-        e.preventDefault();
-        setOver(true);
-      }}
-      onDragLeave={() => setOver(false)}
-      onDrop={(e) => {
-        e.preventDefault();
-        setOver(false);
-        const f = e.dataTransfer.files?.[0];
-        if (f && !disabled) onFile(f);
-      }}
-    >
-      <div className="stack-s">
-        <b>{label}</b>
-        <span className="xs muted">
-          {formats.join(', ')} · до {maxMb} МБ
-        </span>
-      </div>
-      <input
-        ref={input}
-        type="file"
-        className="sr-only"
-        accept={formats.map((f) => '.' + f.toLowerCase()).join(',')}
-        onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) onFile(f);
-          e.target.value = '';
-        }}
-        disabled={disabled}
-        aria-label="Выбрать файл"
-      />
-      <Btn view="outlined" size={40} onClick={() => input.current?.click()} disabled={disabled}>
-        Выбрать файл
-      </Btn>
-    </div>
-  );
-}
-
-export function FileBox({ name, size, uploadedAt, right }: { name: string; size: number; uploadedAt?: string; right?: ReactNode }) {
-  const ext = name.split('.').pop()?.toUpperCase();
-  return (
-    <div className="filebox">
-      <span className="ico" aria-hidden="true">
-        {ext}
-      </span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
-        <div className="xs muted">
-          {(size / 1024 / 1024).toFixed(1).replace('.', ',')} МБ{uploadedAt ? ` · загружен ${date(uploadedAt)}` : ''}
-        </div>
-      </div>
-      {right}
     </div>
   );
 }
