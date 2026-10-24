@@ -1,91 +1,124 @@
-// HTTP-реализация API под реальный бэкенд. Эндпоинты описаны в docs/api-contract.md.
-// Включается переменной окружения VITE_API_MODE=http (и VITE_API_URL).
-import type { CreditApi } from './client';
-import { ApiError, type Session } from './types';
+import { ApiError, type Tokens } from './types';
+import { useSession } from './session';
 
-const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? '/api';
+/** Адрес API. В Docker и при `npm run dev` это /api — запросы проксируются на бэкенд (порт 3001). */
+export const API_URL = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '');
 
-async function call<T>(s: Session | null, method: string, path: string, body?: unknown, idem?: string): Promise<T> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (s) headers['X-Demo-User'] = s.userId;
-  if (idem) headers['Idempotency-Key'] = idem;
-  let res: Response;
+const FIELD_LABEL: Record<string, string> = {
+  email: 'Email',
+  password: 'Пароль',
+  password_confirm: 'Повтор пароля',
+  username: 'Имя пользователя',
+  inn: 'ИНН',
+  ogrn: 'ОГРН',
+  legal_name: 'Название',
+  okved: 'ОКВЭД',
+  region: 'Регион',
+  registration_date: 'Дата регистрации',
+  employee_count: 'Сотрудников',
+  requested_amount_rub: 'Сумма',
+  term_months: 'Срок',
+  purpose: 'Цель',
+  segment: 'Сегмент',
+  credit_utilization: 'Использование лимитов',
+};
+
+const STATUS_TEXT: Record<number, string> = {
+  401: 'Нужно войти заново',
+  403: 'Недостаточно прав',
+  404: 'Не найдено',
+  500: 'Ошибка на сервере. Попробуйте ещё раз',
+  502: 'Сервис скоринга недоступен',
+  504: 'Сервис скоринга не ответил вовремя',
+};
+
+async function toError(res: Response): Promise<ApiError> {
+  let detail: unknown;
   try {
-    res = await fetch(`${BASE}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    detail = (await res.json())?.detail;
   } catch {
-    throw new ApiError('network', 'Нет связи с сервером. Данные сохранены — попробуйте ещё раз', true);
+    detail = undefined;
   }
-  if (!res.ok) {
-    let err: { code?: string; message?: string; retryable?: boolean } = {};
-    try {
-      err = await res.json();
-    } catch {
-      /* пусто */
-    }
-    throw new ApiError(err.code ?? `http_${res.status}`, err.message ?? 'Ошибка сервера', err.retryable ?? res.status >= 500);
+  if (typeof detail === 'string' && detail) return new ApiError(res.status, detail);
+  if (Array.isArray(detail)) {
+    // 422 от FastAPI: [{ loc: ['body', 'company', 'inn'], msg: '...' }]
+    const fields = [...new Set(detail.map((d) => FIELD_LABEL[String(d?.loc?.[d.loc.length - 1])] ?? String(d?.loc?.[d.loc.length - 1] ?? '')).filter(Boolean))];
+    return new ApiError(res.status, fields.length ? `Проверьте поля: ${fields.join(', ')}` : 'Проверьте заполненные поля');
   }
-  if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
+  return new ApiError(res.status, STATUS_TEXT[res.status] ?? `Ошибка ${res.status}`);
 }
 
-const listeners = new Set<() => void>();
-let timer: ReturnType<typeof setInterval> | null = null;
+interface Opts {
+  body?: unknown;
+  query?: Record<string, string | number | boolean | null | undefined>;
+  auth?: boolean;
+  retry?: boolean;
+}
 
-export function createHttpApi(): CreditApi {
-  return {
-    mode: 'http',
-    getDemoAccounts: () => call(null, 'GET', '/demo/accounts'),
-    getUser: (s) => call(s, 'GET', '/me'),
-    getProducts: () => call(null, 'GET', '/products'),
-    getCompany: (s, id) => call(s, 'GET', `/companies/${id}`),
-    getChances: (s, id, o) => call(s, 'GET', `/companies/${id}/chances${o?.refresh ? '?refresh=1' : ''}`),
-    giveBkiConsent: (s, id) => call(s, 'POST', `/companies/${id}/consents/bki`),
-    listApplications: (s) => call(s, 'GET', '/applications'),
-    getApplication: (s, id) => call(s, 'GET', `/applications/${id}`),
-    createDraft: (s, input) => call(s, 'POST', '/applications', input),
-    updateDraft: (s, id, patch) => call(s, 'PATCH', `/applications/${id}`, patch),
-    lookupCompany: (s, id, inn) => call(s, 'POST', `/applications/${id}/company/lookup`, { inn }),
-    confirmCompany: (s, id, how, note) => call(s, 'POST', `/applications/${id}/company/confirm`, { how, note }),
-    uploadStatement: (s, id, f) => call(s, 'POST', `/applications/${id}/statement`, f),
-    confirmStatementFields: (s, id, fields) => call(s, 'POST', `/applications/${id}/statement/confirm`, { fields }),
-    removeStatement: (s, id) => call(s, 'DELETE', `/applications/${id}/statement`),
-    giveConsents: (s, id) => call(s, 'POST', `/applications/${id}/consents`),
-    submitApplication: (s, id, k) => call(s, 'POST', `/applications/${id}/submit`, {}, k),
-    cancelApplication: (s, id, k) => call(s, 'POST', `/applications/${id}/cancel`, {}, k),
-    uploadDocument: (s, id, doc, f) => call(s, 'POST', `/applications/${id}/documents/${doc}/file`, f),
-    confirmDocumentFields: (s, id, doc, fields) => call(s, 'POST', `/applications/${id}/documents/${doc}/confirm`, { fields }),
-    answerInfoRequest: (s, id, doc, answer) => call(s, 'POST', `/applications/${id}/documents/${doc}/answer`, { answer }),
-    sendDocuments: (s, id, k) => call(s, 'POST', `/applications/${id}/documents/send`, {}, k),
-    acceptOffer: (s, id, offerId, version, k) => call(s, 'POST', `/applications/${id}/offer/accept`, { offerId, version }, k),
-    rejectOffer: (s, id, offerId, k) => call(s, 'POST', `/applications/${id}/offer/reject`, { offerId }, k),
-    signContract: (s, id, k) => call(s, 'POST', `/applications/${id}/sign`, {}, k),
-    listTasks: (s) => call(s, 'GET', '/bank/tasks'),
-    listAllApplications: (s) => call(s, 'GET', '/bank/applications'),
-    takeTask: (s, id, k) => call(s, 'POST', `/bank/applications/${id}/take`, {}, k),
-    requestDocuments: (s, id, req, k) => call(s, 'POST', `/bank/applications/${id}/document-requests`, req, k),
-    reviewDocument: (s, id, doc, verdict, reason) => call(s, 'POST', `/bank/applications/${id}/documents/${doc}/review`, { verdict, reason }),
-    resolveCompliance: (s, id, verdict, comment) => call(s, 'POST', `/bank/applications/${id}/compliance`, { verdict, comment }),
-    escalateToCommittee: (s, id) => call(s, 'POST', `/bank/applications/${id}/escalate`),
-    makeDecision: (s, id, input, k) => call(s, 'POST', `/bank/applications/${id}/decision`, input, k),
-    rerunChecks: (s, id) => call(s, 'POST', `/bank/applications/${id}/checks/rerun`),
-    draftClientText: (s, id, outcome, reasons, amount) => call<{ text: string }>(s, 'POST', `/bank/applications/${id}/decision/draft-text`, { outcome, reasons, amount }).then((r) => r.text),
-    getSources: () => call(null, 'GET', '/demo/sources'),
-    setSource: (id, patch) => call(null, 'PATCH', `/demo/sources/${id}`, patch),
-    getSimLog: () => call(null, 'GET', '/demo/log'),
-    runScenario: (name) => call<{ applicationId: string }>(null, 'POST', `/demo/scenarios/${name}`).then((r) => r.applicationId),
-    resetDemo: () => call(null, 'POST', '/demo/reset'),
-    askAi: (s, ctx, question) => call(s, 'POST', '/ai/ask', { ctx, question }),
-    onChange(cb) {
-      listeners.add(cb);
-      // Пока нет SSE — опрос раз в 3 секунды
-      if (!timer) timer = setInterval(() => listeners.forEach((l) => l()), 3000);
-      return () => {
-        listeners.delete(cb);
-        if (!listeners.size && timer) {
-          clearInterval(timer);
-          timer = null;
+function url(path: string, query?: Opts['query']) {
+  const qs = query
+    ? Object.entries(query)
+        .filter(([, v]) => v !== undefined && v !== null && v !== '')
+        .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+        .join('&')
+    : '';
+  return `${API_URL}${path}${qs ? `?${qs}` : ''}`;
+}
+
+export async function request<T>(method: string, path: string, opts: Opts = {}): Promise<T> {
+  const { body, query, auth = true, retry = true } = opts;
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  const token = useSession.getState().access;
+  if (auth && token) headers.Authorization = `Bearer ${token}`;
+
+  let res: Response;
+  try {
+    res = await fetch(url(path, query), { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  } catch {
+    throw new ApiError(0, 'Нет связи с сервером. Проверьте, что бэкенд запущен');
+  }
+
+  if (res.status === 401 && auth && retry) {
+    if (await renewSession()) return request<T>(method, path, { ...opts, retry: false });
+    useSession.getState().clear();
+    throw new ApiError(401, 'Сессия истекла — войдите снова');
+  }
+  if (!res.ok) throw await toError(res);
+  if (res.status === 204) return undefined as T;
+  return (await res.json()) as T;
+}
+
+// ───── Продление сессии: refresh-токен, а для демо-аккаунта — повторный вход
+
+let renewing: Promise<boolean> | null = null;
+
+export function renewSession(): Promise<boolean> {
+  if (!renewing) {
+    renewing = (async () => {
+      const s = useSession.getState();
+      if (s.refresh) {
+        try {
+          const r = await request<{ access_token: string }>('POST', '/auth/refresh', { query: { refresh_token: s.refresh }, auth: false });
+          useSession.getState().setTokens(r.access_token);
+          return true;
+        } catch {
+          /* refresh не сработал — пробуем дальше */
         }
-      };
-    },
-  };
+      }
+      if (s.demo) {
+        try {
+          const t = await request<Tokens>('POST', '/auth/login', { body: s.demo, auth: false });
+          useSession.getState().setTokens(t.access_token, t.refresh_token);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+      return false;
+    })().finally(() => {
+      renewing = null;
+    });
+  }
+  return renewing;
 }
