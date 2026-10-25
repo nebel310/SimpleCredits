@@ -23,6 +23,9 @@ class ApplicationOrm(Model):
     outcome: Mapped[str | None] = mapped_column(nullable=True)
     # Условия предложения: продукт, сумма, срок, ставка, платёж (services.products.build_offer)
     offer: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Оформление: номер модельного договора и момент синтетической выдачи
+    contract_number: Mapped[str | None] = mapped_column(nullable=True)
+    issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     requested_amount_rub: Mapped[int] = mapped_column(nullable=False)
     term_months: Mapped[int] = mapped_column(nullable=False)
     purpose: Mapped[str] = mapped_column(nullable=False)

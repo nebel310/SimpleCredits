@@ -17,6 +17,7 @@ from schemas.applications import (
     application_orm_to_schema,
 )
 from schemas.base import ErrorResponse, ValidationErrorResponse
+from services import deal
 from services.application import ApplicationService
 from services.exceptions import ProductMismatchError, ProfileIncompleteError
 from utils.pagination import decode_cursor, encode_cursor
@@ -161,3 +162,50 @@ async def get_application_events(
 
     events = await ApplicationRepository.list_events(application_id)
     return [SApplicationEventResponse.model_validate(e) for e in events]
+
+async def _own_application(application_id: str, current_user: UserOrm):
+    """Заявка текущего клиента. Принимать и оформлять может только владелец — не банк"""
+    application = await ApplicationRepository.get_by_application_id(application_id)
+    if not application:
+        raise HTTPException(status_code=404, detail="Заявка не найдена")
+    if application.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Действие доступно только владельцу заявки")
+    return application
+
+
+DEAL_RESPONSES = {
+    401: {"model": ErrorResponse},
+    403: {"model": ErrorResponse},
+    404: {"model": ErrorResponse},
+    409: {"model": ErrorResponse, "description": "Действие недоступно в текущем статусе заявки"},
+}
+
+
+@router.post("/{application_id}/accept", response_model=SApplicationDetail, responses=DEAL_RESPONSES)
+async def accept_application_offer(application_id: str, current_user: UserOrm = Depends(get_current_user)):
+    """Принять предложение банка: одобрение, подобранный продукт или другие условия → статус accepted"""
+    application = await _own_application(application_id, current_user)
+    try:
+        return application_orm_to_schema(await deal.accept_offer(application))
+    except deal.DealError as exc:
+        raise HTTPException(status_code=409, detail=exc.message)
+
+
+@router.post("/{application_id}/issue", response_model=SApplicationDetail, responses=DEAL_RESPONSES)
+async def issue_application_credit(application_id: str, current_user: UserOrm = Depends(get_current_user)):
+    """Подтвердить условия и оформить: номер модельного договора, синтетическая выдача → статус issued"""
+    application = await _own_application(application_id, current_user)
+    try:
+        return application_orm_to_schema(await deal.issue_credit(application))
+    except deal.DealError as exc:
+        raise HTTPException(status_code=409, detail=exc.message)
+
+
+@router.post("/{application_id}/reject", response_model=SApplicationDetail, responses=DEAL_RESPONSES)
+async def reject_application_offer(application_id: str, current_user: UserOrm = Depends(get_current_user)):
+    """Отказаться от предложения до оформления → статус rejected_by_client"""
+    application = await _own_application(application_id, current_user)
+    try:
+        return application_orm_to_schema(await deal.reject_offer(application))
+    except deal.DealError as exc:
+        raise HTTPException(status_code=409, detail=exc.message)

@@ -11,7 +11,12 @@ LegalForm = Literal["llc", "individual_entrepreneur", "joint_stock_company"]
 RiskGrade = Literal["A", "B", "C", "D", "E"]
 Decision = Literal["approve", "approve_with_conditions", "manual_review", "decline"]
 ReasonImpact = Literal["positive", "negative", "neutral"]
-ApplicationStatus = Literal["pending", "failed", "confirmed", "different", "declined"]
+ApplicationStatus = Literal[
+    "pending", "failed", "confirmed", "different", "declined",
+    # после решения: клиент принял предложение → кредит оформлен и выдан (синтетически),
+    # или клиент отказался от предложения
+    "accepted", "issued", "rejected_by_client",
+]
 # Уточнение статуса different: что именно предлагает банк
 ApplicationOutcome = Literal["ALTERNATIVE_PRODUCT", "COUNTER_OFFER", "MANUAL_REVIEW"]
 
@@ -192,6 +197,8 @@ class SApplicationDetail(BaseModel):
     product_selected_by_system: bool = False
     outcome: ApplicationOutcome | None = None
     offer: SOffer | None = None
+    contract_number: str | None = None
+    issued_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
     application: SApplication
@@ -222,6 +229,8 @@ def application_orm_to_schema(application) -> SApplicationDetail:
         product_selected_by_system=bool(getattr(application, "product_selected_by_system", False)),
         outcome=getattr(application, "outcome", None),
         offer=SOffer.model_validate(application.offer) if getattr(application, "offer", None) else None,
+        contract_number=getattr(application, "contract_number", None),
+        issued_at=getattr(application, "issued_at", None),
         created_at=application.created_at,
         updated_at=application.updated_at,
         application=SApplication(

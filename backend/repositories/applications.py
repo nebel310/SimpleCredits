@@ -137,6 +137,45 @@ class ApplicationRepository:
         return await cls.get_by_application_id(application_id)
 
     @classmethod
+    async def transition(
+        cls,
+        application_id: str,
+        from_statuses: tuple[str, ...],
+        to_status: str,
+        event_type: str,
+        payload: dict | None = None,
+        values: dict | None = None,
+    ) -> ApplicationOrm | None:
+        """
+        Переводит заявку в новый статус, только если сейчас она в одном из from_statuses.
+        Проверка и запись — одним UPDATE, поэтому два одновременных запроса не пройдут оба.
+        Пишет событие. Возвращает обновлённую заявку или None, если статус уже другой.
+        """
+        now = datetime.now(timezone.utc)
+        async with new_session() as session:
+            result = await session.execute(
+                update(ApplicationOrm)
+                .where(
+                    ApplicationOrm.application_id == application_id,
+                    ApplicationOrm.status.in_(from_statuses),
+                )
+                .values(status=to_status, updated_at=now, **(values or {}))
+            )
+            if result.rowcount != 1:
+                await session.rollback()
+                return None
+            session.add(
+                ApplicationEventOrm(
+                    application_id=application_id,
+                    event_type=event_type,
+                    payload={"status": to_status, **(payload or {})},
+                    created_at=now,
+                )
+            )
+            await session.commit()
+        return await cls.get_by_application_id(application_id)
+
+    @classmethod
     async def mark_failed(cls, application_id: str, reason: str | None = None) -> None:
         """Переводит заявку в статус failed и пишет событие failed"""
         now = datetime.now(timezone.utc)

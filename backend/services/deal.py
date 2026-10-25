@@ -1,0 +1,120 @@
+"""
+Завершение сделки: клиент принимает предложение, подтверждает условия — кредит
+оформляется и выдаётся. Выдача синтетическая: номер модельного договора и запись
+в журнале, реальных проводок и документооборота нет.
+"""
+from datetime import datetime, timezone
+
+from models.applications import ApplicationOrm
+from repositories.applications import ApplicationRepository
+from services.ws_manager import ws_manager
+
+
+# Что можно принять: одобрение и предложения банка. Ручная проверка — не оффер.
+ACCEPTABLE_OUTCOMES = ("ALTERNATIVE_PRODUCT", "COUNTER_OFFER")
+
+WHY_NOT = {
+    "pending": "Заявка ещё обрабатывается",
+    "failed": "Проверка не завершилась — сначала повторите её",
+    "declined": "По заявке отказ — принимать нечего",
+    "accepted": "Предложение уже принято",
+    "issued": "Кредит уже оформлен",
+    "rejected_by_client": "Вы отказались от этого предложения — подайте новую заявку",
+}
+
+
+class DealError(Exception):
+    """Действие недоступно в текущем состоянии заявки (HTTP 409)"""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
+
+
+def _has_offer_to_accept(application: ApplicationOrm) -> bool:
+    if not application.offer:
+        return False
+    if application.status == "confirmed":
+        return True
+    return application.status == "different" and application.outcome in ACCEPTABLE_OUTCOMES
+
+
+def _why_not(application: ApplicationOrm) -> str:
+    if application.status == "different" and application.outcome == "MANUAL_REVIEW":
+        return "Заявка на ручной проверке — дождитесь решения банка"
+    return WHY_NOT.get(application.status, "Действие недоступно для этой заявки")
+
+
+async def _notify(application: ApplicationOrm) -> None:
+    await ws_manager.broadcast(
+        application.user_id,
+        {
+            "type": "status_changed",
+            "application_id": application.application_id,
+            "status": application.status,
+            "payload": {"outcome": application.outcome},
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+
+async def accept_offer(application: ApplicationOrm) -> ApplicationOrm:
+    """Клиент принимает предложение банка (одобрение, другой продукт или другие условия)"""
+    if not _has_offer_to_accept(application):
+        raise DealError(_why_not(application))
+    updated = await ApplicationRepository.transition(
+        application.application_id,
+        from_statuses=(application.status,),
+        to_status="accepted",
+        event_type="offer_accepted",
+        payload={"offer": application.offer},
+    )
+    if updated is None:
+        raise DealError("Статус заявки уже изменился — обновите страницу")
+    await _notify(updated)
+    return updated
+
+
+async def issue_credit(application: ApplicationOrm) -> ApplicationOrm:
+    """Клиент подтверждает условия — оформляем модельный договор и выдаём кредит"""
+    if application.status != "accepted":
+        raise DealError(
+            "Сначала примите предложение" if _has_offer_to_accept(application) else _why_not(application)
+        )
+    now = datetime.now(timezone.utc)
+    contract_number = f"SC-{now:%Y%m%d}-{application.application_id[:6].upper()}"
+    offer = application.offer or {}
+    updated = await ApplicationRepository.transition(
+        application.application_id,
+        from_statuses=("accepted",),
+        to_status="issued",
+        event_type="issued",
+        payload={
+            "contract_number": contract_number,
+            "amount_rub": offer.get("amount_rub"),
+            "term_months": offer.get("term_months"),
+            "rate_percent": offer.get("rate_percent"),
+            "monthly_payment_rub": offer.get("monthly_payment_rub"),
+        },
+        values={"contract_number": contract_number, "issued_at": now},
+    )
+    if updated is None:
+        raise DealError("Статус заявки уже изменился — обновите страницу")
+    await _notify(updated)
+    return updated
+
+
+async def reject_offer(application: ApplicationOrm) -> ApplicationOrm:
+    """Клиент отказывается от предложения (до оформления)"""
+    if not (_has_offer_to_accept(application) or application.status == "accepted"):
+        raise DealError(_why_not(application))
+    updated = await ApplicationRepository.transition(
+        application.application_id,
+        from_statuses=(application.status,),
+        to_status="rejected_by_client",
+        event_type="offer_rejected",
+    )
+    if updated is None:
+        raise DealError("Статус заявки уже изменился — обновите страницу")
+    await _notify(updated)
+    return updated
