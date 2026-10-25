@@ -25,7 +25,7 @@ test('профиль: проверки полей, подстановка из �
   await fillProfile(page);
   // в форме заявки — данные компании из профиля
   await page.goto('./#/apply');
-  await expect(page.getByText('Данные компании')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Данные компании' })).toBeVisible();
   await page.locator('.choice', { hasText: 'Микрозайм' }).click();
   await page.getByLabel('Сумма').fill('900000');
   await submitApplication(page);

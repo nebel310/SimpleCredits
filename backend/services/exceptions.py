@@ -18,3 +18,7 @@ class EnrichmentError(Exception):
 
 class ProfileIncompleteError(Exception):
     """Профиль компании не заполнен и данных в теле заявки недостаточно"""
+
+
+class ManualDecisionNotAllowedError(Exception):
+    """Ручное решение доступно только для заявки из серой зоны"""

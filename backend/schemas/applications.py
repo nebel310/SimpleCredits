@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 ProductType = Literal["microloan", "term_loan", "overdraft", "credit_line", "leasing"]
@@ -14,6 +14,7 @@ ReasonImpact = Literal["positive", "negative", "neutral"]
 ApplicationStatus = Literal["pending", "failed", "confirmed", "different", "declined"]
 
 DEFAULT_PRODUCT_TYPE: ProductType = "term_loan"
+CONSENT_VERSION = "2026-10-25"
 
 
 class SApplication(BaseModel):
@@ -131,6 +132,22 @@ class SModelInfoResponse(BaseModel):
     metrics: dict[str, float] = {}
 
 
+class SApplicationConsents(BaseModel):
+    """Согласия клиента, обязательные для подачи заявки"""
+    personal_data_processing: bool
+    credit_history_request: bool
+    version: str = Field(default=CONSENT_VERSION, min_length=1, max_length=32)
+
+    @model_validator(mode="after")
+    def validate_accepted(self):
+        """Проверяет, что оба обязательных согласия предоставлены"""
+        if not self.personal_data_processing or not self.credit_history_request:
+            raise ValueError(
+                "Нужны согласия на обработку персональных данных и запрос кредитной истории"
+            )
+        return self
+
+
 class SApplicationCreateRequest(BaseModel):
     """Тело запроса на создание кредитной заявки"""
     product_type: ProductType | None = None
@@ -141,6 +158,7 @@ class SApplicationCreateRequest(BaseModel):
     company: SCompany | None = None
     financials: SFinancials | None = None
     credit_history: SCreditHistory | None = None
+    consents: SApplicationConsents
 
 
 class SApplicationEventResponse(BaseModel):
@@ -166,6 +184,7 @@ class SApplicationDetail(BaseModel):
     scoring_result: SScoreApplicationResponse | None = None
     enriched_data: dict | None = None
     explanation: str | None = None
+    consents: dict | None = None
 
 
 class SApplicationListResponse(BaseModel):
@@ -228,4 +247,5 @@ def application_orm_to_schema(application) -> SApplicationDetail:
         scoring_result=scoring_result,
         enriched_data=application.enriched_data,
         explanation=application.explanation,
+        consents=application.consents,
     )

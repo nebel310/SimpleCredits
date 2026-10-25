@@ -159,6 +159,19 @@ export interface ApplicationParams {
   submitted_at: string;
 }
 
+export interface ApplicationConsents {
+  personal_data_processing: boolean;
+  credit_history_request: boolean;
+  version: string;
+  accepted_at: string;
+}
+
+export interface ApplicationConsentsInput {
+  personal_data_processing: boolean;
+  credit_history_request: boolean;
+  version: string;
+}
+
 export interface Application {
   application_id: string;
   status: AppStatus;
@@ -171,6 +184,7 @@ export interface Application {
   scoring_result: ScoringResult | null;
   enriched_data: EnrichedData | null;
   explanation: string | null;
+  consents: ApplicationConsents | null;
 }
 
 export interface ApplicationList {
@@ -185,6 +199,7 @@ export interface CreateApplicationInput {
   term_months: number;
   purpose: Purpose;
   segment: Segment;
+  consents: ApplicationConsentsInput;
 }
 
 export interface AppEvent {

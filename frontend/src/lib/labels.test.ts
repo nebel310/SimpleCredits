@@ -15,6 +15,7 @@ function app(status: AppStatus, decision?: Decision, conditions: { code: string;
     scoring_result: decision ? { application_id: 'x', score: 900, pd: 0.03, risk_grade: 'B', reason_codes: [], model_version: 'v', decision: { decision, reason_codes: [], conditions } } : null,
     enriched_data: null,
     explanation: null,
+    consents: null,
   };
 }
 
@@ -46,6 +47,7 @@ describe('eventText', () => {
   it('источники обогащения по-русски', () => expect(eventText(ev('enriched', { sources: ['egrul', 'fns', 'bki'] }))).toBe('Получены данные: ЕГРЮЛ, ФНС, БКИ'));
   it('скоринг с баллом и грейдом', () => expect(eventText(ev('scored', { score: 972, risk_grade: 'B' }))).toBe('Скоринг готов: балл 972, грейд B'));
   it('смена статуса', () => expect(eventText(ev('status_changed', { status: 'confirmed' }))).toBe('Статус: одобрено'));
+  it('ручное решение банка', () => expect(eventText(ev('manual_decision', { status: 'confirmed' }))).toBe('Банк одобрил заявку вручную'));
   it('неизвестное событие — как есть', () => expect(eventText(ev('something'))).toBe('something'));
 });
 

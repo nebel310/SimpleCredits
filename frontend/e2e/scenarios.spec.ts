@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { DEMO, demoLogin, submitApplication } from './helpers';
+import { DEMO, demoLogin, logout, submitApplication } from './helpers';
 
 // Пять демо-компаний — пять разных исходов ML-модели (USERFLOW §5)
 
@@ -32,6 +32,20 @@ test('C — пограничная зона риска, ручная прове�
   await submitApplication(page);
   await expect(page.getByRole('heading', { name: 'Автоматического решения нет' })).toBeVisible();
   await expect(page.getByText('Оценка риска в пограничной зоне')).toBeVisible();
+});
+
+test('C — банк принимает ручное решение по заявке', async ({ page }) => {
+  await demoLogin(page, DEMO.c);
+  await page.goto('./#/apply');
+  await submitApplication(page);
+  const clientUrl = page.url();
+  await logout(page);
+  await demoLogin(page, DEMO.bank);
+  await page.goto(clientUrl.replace('#/applications/', '#/bank/applications/'));
+  await expect(page.getByRole('heading', { name: 'Ручное решение' })).toBeVisible();
+  await page.getByRole('button', { name: 'Одобрить вручную' }).click();
+  await expect(page.getByRole('heading', { name: 'Заявка одобрена' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Ручное решение' })).toHaveCount(0);
 });
 
 test('D — продукт не выбран, банк подобрал сам', async ({ page }) => {

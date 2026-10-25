@@ -17,8 +17,9 @@ class ApplicationRepository:
         user_id: int,
         data: SScoreApplicationRequest,
         product_type: str | None = None,
+        consents: dict | None = None,
     ) -> ApplicationOrm:
-        """Создаёт заявку со снимком профиля и пишет событие created"""
+        """Создаёт заявку со снимком профиля и согласий и пишет событие created"""
         application_id = uuid.uuid4().hex
         now = datetime.now(timezone.utc)
         actual_product_type = product_type if product_type is not None else data.application.product_type
@@ -59,6 +60,7 @@ class ApplicationRepository:
                 credit_utilization=data.credit_history.credit_utilization,
                 closed_obligations_count=data.credit_history.closed_obligations_count,
                 applications_last_6m=data.credit_history.applications_last_6m,
+                consents=consents,
                 created_at=now,
                 updated_at=now,
             )
@@ -120,6 +122,39 @@ class ApplicationRepository:
                     application_id=application_id,
                     event_type="status_changed",
                     payload={"status": status},
+                    created_at=now,
+                )
+            )
+            await session.commit()
+
+        return await cls.get_by_application_id(application_id)
+
+    @classmethod
+    async def set_manual_decision(
+        cls,
+        application_id: str,
+        status: str,
+        admin_id: int,
+        comment: str | None = None,
+    ) -> ApplicationOrm | None:
+        """Сохраняет ручное решение банка и пишет событие manual_decision"""
+        now = datetime.now(timezone.utc)
+
+        async with new_session() as session:
+            await session.execute(
+                update(ApplicationOrm)
+                .where(ApplicationOrm.application_id == application_id)
+                .values(status=status, updated_at=now)
+            )
+            session.add(
+                ApplicationEventOrm(
+                    application_id=application_id,
+                    event_type="manual_decision",
+                    payload={
+                        "status": status,
+                        "admin_id": admin_id,
+                        "comment": comment,
+                    },
                     created_at=now,
                 )
             )

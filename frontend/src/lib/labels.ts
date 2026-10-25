@@ -56,6 +56,34 @@ export function factorTitle(r: { feature: string; description: string }): string
   return r.description.startsWith('Фактор ') && FEATURE_NAME[r.feature] ? FEATURE_NAME[r.feature] : r.description;
 }
 
+/** Что клиент может изменить, чтобы улучшить оценку по этому фактору */
+export const FACTOR_ADVICE: Record<string, string> = {
+  requested_to_annual_revenue: 'Запросите сумму меньше или подтвердите годовую выручку отчётностью.',
+  log_requested_amount: 'Уменьшите запрашиваемую сумму.',
+  debt_service_ratio: 'Снизьте платежи по действующим кредитам или запросите меньшую сумму.',
+  debt_to_revenue: 'Снизьте общую долговую нагрузку.',
+  has_current_past_due: 'Закройте текущую просрочку — следующие заявки будут оцениваться лучше.',
+  max_days_past_due_12m: 'Закройте просрочки и поддерживайте платёжную дисциплину.',
+  credit_utilization: 'Снизьте загрузку кредитных лимитов.',
+  applications_last_6m: 'Не подавайте несколько заявок подряд: частая кредитная активность повышает риск.',
+  profitability: 'Подтвердите прибыль отчётностью.',
+  ebitda_margin: 'Подтвердите EBITDA и маржинальность отчётностью.',
+  cash_coverage: 'Пополните остаток на счёте или подтвердите стабильные поступления.',
+  txn_balance_latest: 'Поддерживайте положительный остаток на счёте.',
+  expense_ratio: 'Подтвердите структуру расходов или снизьте их долю.',
+  log_annual_revenue: 'Подтвердите годовую выручку отчётностью или выпиской.',
+  annual_revenue_rub: 'Подтвердите годовую выручку отчётностью или выпиской.',
+  tax_debt_rub: 'Погасите налоговую задолженность.',
+  unpaid_tax_count: 'Погасите налоговую задолженность.',
+  blocked_accounts_count: 'Разблокируйте счета в банке.',
+  bki_credit_score: 'Проверьте кредитную историю в БКИ и оспорьте ошибочные записи.',
+  company_age_months: 'История компании пока короткая — это ограничение, которое сглаживается со временем.',
+};
+
+export function factorAdvice(feature: string): string | null {
+  return FACTOR_ADVICE[feature] ?? null;
+}
+
 export const CONDITION_NAME: Record<string, string> = { REDUCE_AMOUNT: 'Снизить сумму' };
 
 export type ChipKind = 'high' | 'mid' | 'low' | 'neutral' | 'attention';
@@ -108,6 +136,10 @@ export function eventText(e: AppEvent): string {
     }
     case 'failed':
       return 'Ошибка обработки';
+    case 'manual_decision': {
+      const st = p.status as AppStatus | undefined;
+      return st === 'confirmed' ? 'Банк одобрил заявку вручную' : st === 'declined' ? 'Банк отклонил заявку вручную' : 'Ручное решение банка';
+    }
     default:
       return e.event_type;
   }

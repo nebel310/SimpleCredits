@@ -2,9 +2,15 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from models.auth import UserOrm
 from repositories.admin import AdminRepository
-from schemas.admin import SAdminApplicationListResponse, SAdminStatsResponse
-from schemas.applications import application_orm_to_schema
+from schemas.admin import (
+    SAdminApplicationDecisionRequest,
+    SAdminApplicationListResponse,
+    SAdminStatsResponse,
+)
+from schemas.applications import SApplicationDetail, application_orm_to_schema
 from schemas.base import ErrorResponse, ValidationErrorResponse
+from services.application import ApplicationService
+from services.exceptions import ManualDecisionNotAllowedError
 from utils.pagination import decode_cursor, encode_cursor
 from utils.security import require_admin
 
@@ -57,6 +63,37 @@ async def list_all_applications(
         next_cursor=encode_cursor(next_id) if next_id else None,
         previous_cursor=encode_cursor(prev_id) if prev_id else None,
     )
+
+
+@router.post(
+    "/applications/{application_id}/decision",
+    response_model=SApplicationDetail,
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+    },
+)
+async def decide_application(
+    application_id: str,
+    data: SAdminApplicationDecisionRequest,
+    current_user: UserOrm = Depends(require_admin),
+):
+    """Применяет ручное решение банка к заявке из серой зоны"""
+    try:
+        application = await ApplicationService.decide_manually(
+            application_id=application_id,
+            decision=data.decision,
+            admin_id=current_user.id,
+            comment=data.comment,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ManualDecisionNotAllowedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    return application_orm_to_schema(application)
 
 
 @router.get(

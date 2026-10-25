@@ -15,7 +15,7 @@ from schemas.applications import (
 )
 from schemas.auth import _build_company, _build_credit_history, _build_financials
 from services.enrichment import enrich, extract_ml_extra_features
-from services.exceptions import ProfileIncompleteError
+from services.exceptions import ManualDecisionNotAllowedError, ProfileIncompleteError
 from services.scoring import decision_to_status
 from services.ws_manager import ws_manager
 
@@ -67,6 +67,10 @@ class ApplicationService:
             user_id=refreshed.id,
             data=request_for_ml,
             product_type=create_request.product_type,
+            consents={
+                **create_request.consents.model_dump(),
+                "accepted_at": datetime.now(timezone.utc).isoformat(),
+            },
         )
 
         enriched = await enrich(company.inn)
@@ -141,6 +145,49 @@ class ApplicationService:
         )
 
         return updated or application
+
+    @classmethod
+    async def decide_manually(
+        cls,
+        application_id: str,
+        decision: str,
+        admin_id: int,
+        comment: str | None = None,
+    ) -> ApplicationOrm:
+        """Применяет ручное решение банка к заявке из серой зоны"""
+        application = await ApplicationRepository.get_by_application_id(application_id)
+        if application is None:
+            raise ValueError("Заявка не найдена")
+
+        scoring = application.scoring_result or {}
+        model_decision = (scoring.get("decision") or {}).get("decision")
+        if application.status != "different" or model_decision != "manual_review":
+            raise ManualDecisionNotAllowedError(
+                "Ручное решение доступно только для заявки в статусе ручной проверки"
+            )
+
+        new_status = "confirmed" if decision == "approve" else "declined"
+        updated = await ApplicationRepository.set_manual_decision(
+            application_id=application_id,
+            status=new_status,
+            admin_id=admin_id,
+            comment=comment,
+        )
+        if updated is None:
+            raise ValueError("Заявка не найдена")
+
+        await ws_manager.broadcast(
+            application.user_id,
+            {
+                "type": "status_changed",
+                "application_id": application_id,
+                "status": new_status,
+                "payload": {"manual_decision": decision, "admin_id": admin_id},
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+        return updated
 
     @classmethod
     async def _maybe_update_profile(

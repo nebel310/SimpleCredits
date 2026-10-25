@@ -1,10 +1,10 @@
 import { useEffect } from 'react';
 import { api, type Application, type AppEvent, type Product } from '../../api';
 import { useLiveUpdates } from '../../api/ws';
-import { useQuery } from '../../lib/hooks';
+import { useAction, useQuery } from '../../lib/hooks';
 import { loadProducts, productByType, productName } from '../../lib/catalog';
 import { date, dateTime, money, months, pct, time } from '../../lib/format';
-import { CONDITION_NAME, DECISION_NAME, FEATURE_NOT_IN_APPLICATION, factorTitle, GRADE_KIND, LEGAL_FORM_NAME, POLICY_REASON, PURPOSE_NAME, SEGMENT_NAME, STATUS, eventText, outcomeText, trackIndex } from '../../lib/labels';
+import { CONDITION_NAME, DECISION_NAME, FEATURE_NOT_IN_APPLICATION, factorAdvice, factorTitle, GRADE_KIND, LEGAL_FORM_NAME, POLICY_REASON, PURPOSE_NAME, SEGMENT_NAME, STATUS, eventText, outcomeText, trackIndex } from '../../lib/labels';
 import { Btn, Chip, EmptyState, ErrorState, Loading, Meter, PageTitle, StatusBanner, Tracker } from '../../ui/kit';
 
 const yesNo = (b: boolean) => (b ? 'да' : 'нет');
@@ -13,6 +13,10 @@ const yesNo = (b: boolean) => (b ? 'да' : 'нет');
 export function ApplicationView({ id, bank }: { id: string; bank?: boolean }) {
   const q = useQuery(() => Promise.all([api.application(id), api.events(id)]), [id]);
   const products = useQuery(loadProducts, []);
+  const decision = useAction(async (value: 'approve' | 'decline') => {
+    await api.adminDecide(id, value);
+    await q.reload(true);
+  });
 
   // Владелец получает обновления по WebSocket; после переподключения перечитываем заявку и события
   useLiveUpdates((m) => {
@@ -30,10 +34,10 @@ export function ApplicationView({ id, bank }: { id: string; bank?: boolean }) {
   if (q.error) return <ErrorState error={q.error.status === 404 ? 'Заявка не найдена' : q.error} onRetry={() => q.reload()} />;
   if (!q.data) return <Loading lines={6} />;
   const [a, events] = q.data;
-  return <View a={a} events={events} products={products.data} bank={bank} />;
+  return <View a={a} events={events} products={products.data} bank={bank} onDecision={decision.run} decisionPending={decision.pending} decisionError={decision.error} />;
 }
 
-function View({ a, events, products, bank }: { a: Application; events: AppEvent[]; products?: Product[]; bank?: boolean }) {
+function View({ a, events, products, bank, onDecision, decisionPending, decisionError }: { a: Application; events: AppEvent[]; products?: Product[]; bank?: boolean; onDecision?: (value: 'approve' | 'decline') => void; decisionPending?: boolean; decisionError?: { message: string } | null }) {
   const p = a.application;
   const s = a.scoring_result;
   const dec = s?.decision;
@@ -44,6 +48,10 @@ function View({ a, events, products, bank }: { a: Application; events: AppEvent[
   const reduce = cond.find((c) => c.code === 'REDUCE_AMOUNT');
   const code = productByType(products, p.product_type)?.code;
   const maxContribution = Math.max(0.0001, ...(s?.reason_codes ?? []).map((r) => Math.abs(r.contribution)));
+  const advice = [...new Set((s?.reason_codes ?? [])
+    .filter((r) => r.impact === 'negative')
+    .map((r) => factorAdvice(r.feature))
+    .filter((x): x is string => Boolean(x)))];
   const e = a.enriched_data;
 
   const actions = bank ? null : reduce ? (
@@ -87,6 +95,28 @@ function View({ a, events, products, bank }: { a: Application; events: AppEvent[
       >
         {out.text}
       </StatusBanner>
+
+      {bank && a.status === 'different' && dec?.decision === 'manual_review' && (
+        <section className="card">
+          <h2 className="h2">Ручное решение</h2>
+          <p className="small muted" style={{ marginTop: 0 }}>
+            Модель отнесла заявку к пограничной зоне. Проверьте данные и примите решение — клиент увидит его сразу в карточке и получит событие в истории.
+          </p>
+          <div className="btn-row">
+            <Btn view="accent" loading={decisionPending} onClick={() => onDecision?.('approve')}>
+              Одобрить вручную
+            </Btn>
+            <Btn view="outlined" loading={decisionPending} onClick={() => onDecision?.('decline')}>
+              Отклонить
+            </Btn>
+          </div>
+          {decisionError && (
+            <span className="small" style={{ color: 'var(--c-negative-ink)', fontWeight: 600 }}>
+              {decisionError.message}
+            </span>
+          )}
+        </section>
+      )}
 
       <div className="row">
         <div className="grow stack">
@@ -177,6 +207,20 @@ function View({ a, events, products, bank }: { a: Application; events: AppEvent[
             </section>
           )}
 
+          {advice.length > 0 && (
+            <section className="card">
+              <h2 className="h2">Что можно улучшить</h2>
+              <ul style={{ margin: 0, paddingLeft: 20 }}>
+                {advice.map((tip) => (
+                  <li key={tip} className="small">
+                    {tip}
+                  </li>
+                ))}
+              </ul>
+              <span className="xs muted">Рекомендации относятся только к факторам, на которые может повлиять компания.</span>
+            </section>
+          )}
+
           {a.explanation && (
             <section className="card">
               <h2 className="h2">Комментарий модели</h2>
@@ -229,13 +273,18 @@ function View({ a, events, products, bank }: { a: Application; events: AppEvent[
                         <dt>Индекс надёжности</dt>
                         <dd>{e.fns.reliability_score} / 100</dd>
                       </div>
-                      <div>
-                        <dt>Массовый адрес / директор</dt>
-                        <dd>
-                          {yesNo(e.fns.mass_address)} / {yesNo(e.fns.mass_director)}
-                        </dd>
-                      </div>
-                    </dl>
+                       <div>
+                         <dt>Массовый адрес / директор</dt>
+                         <dd>
+                           {yesNo(e.fns.mass_address)} / {yesNo(e.fns.mass_director)}
+                         </dd>
+                       </div>
+                       <div>
+                         <dt>Последняя отчётность</dt>
+                         <dd>{date(e.fns.last_reporting_date)}</dd>
+                       </div>
+                     </dl>
+
                   ) : (
                     <span className="small muted">Источник не ответил</span>
                   )}
@@ -256,17 +305,22 @@ function View({ a, events, products, bank }: { a: Application; events: AppEvent[
                         <dt>Остаток долга</dt>
                         <dd>{money(e.bki.total_outstanding_rub)}</dd>
                       </div>
-                      <div>
-                        <dt>Текущая просрочка</dt>
-                        <dd>{yesNo(e.bki.has_current_past_due)}</dd>
-                      </div>
-                    </dl>
+                       <div>
+                         <dt>Текущая просрочка</dt>
+                         <dd>{yesNo(e.bki.has_current_past_due)}</dd>
+                       </div>
+                       <div>
+                         <dt>Обновлено в источнике</dt>
+                         <dd>{date(e.bki.last_update)}</dd>
+                       </div>
+                     </dl>
+
                   ) : (
                     <span className="small muted">Источник не ответил</span>
                   )}
                 </div>
               </div>
-              <span className="xs muted">Ответы мок-сервисов бэкенда на момент подачи заявки</span>
+              <span className="xs muted">Снимок ответов мок-сервисов на момент подачи: {dateTime(a.created_at)}</span>
             </section>
           )}
         </div>
@@ -354,6 +408,29 @@ function View({ a, events, products, bank }: { a: Application; events: AppEvent[
               </ul>
             )}
           </section>
+          {a.consents && (
+            <section className="card tight">
+              <h2 className="h3">Согласия</h2>
+              <dl className="dl">
+                <div>
+                  <dt>Персональные данные</dt>
+                  <dd>{a.consents.personal_data_processing ? 'предоставлено' : 'нет'}</dd>
+                </div>
+                <div>
+                  <dt>Кредитная история</dt>
+                  <dd>{a.consents.credit_history_request ? 'предоставлено' : 'нет'}</dd>
+                </div>
+                <div>
+                  <dt>Версия</dt>
+                  <dd>{a.consents.version}</dd>
+                </div>
+                <div>
+                  <dt>Принято</dt>
+                  <dd>{dateTime(a.consents.accepted_at)}</dd>
+                </div>
+              </dl>
+            </section>
+          )}
         </aside>
       </div>
     </>

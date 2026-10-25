@@ -4,10 +4,11 @@ import { api, profileComplete, useSession, type Product, type Purpose, type Segm
 import { useLiveUpdates } from '../../api/ws';
 import { useAction, useQuery } from '../../lib/hooks';
 import { loadProducts } from '../../lib/catalog';
+import { CONSENT_VERSION } from '../../lib/consents';
 import { demoByEmail } from '../../lib/demo';
 import { money, months, monthsUpTo, short } from '../../lib/format';
 import { LEGAL_FORM_NAME, PURPOSE_NAME, SEGMENT_NAME } from '../../lib/labels';
-import { Btn, ErrorState, Loading, MoneyField, PageTitle, RadioGroup, SelectField, StatusBanner, TextField, Tracker } from '../../ui/kit';
+import { Btn, Check, ErrorState, Loading, MoneyField, PageTitle, RadioGroup, SelectField, StatusBanner, TextField, Tracker } from '../../ui/kit';
 
 // Новая заявка — одна форма (USERFLOW, шаг 5). Бэкенд сразу проверяет данные и считает скоринг.
 
@@ -26,6 +27,8 @@ export function Apply() {
   const [term, setTerm] = useState<number | null>(preset?.term_months ?? 12);
   const [purpose, setPurpose] = useState<Purpose>(preset?.purpose ?? 'working_capital');
   const [segment, setSegment] = useState<Segment>(preset?.segment ?? 'small');
+  const [personalDataConsent, setPersonalDataConsent] = useState(false);
+  const [creditHistoryConsent, setCreditHistoryConsent] = useState(false);
   const [tried, setTried] = useState(false);
   const [step, setStep] = useState(0);
 
@@ -66,7 +69,18 @@ export function Apply() {
 
   const submit = useAction(async () => {
     setStep(1);
-    const app = await api.createApplication({ product_type: product?.product_type ?? null, requested_amount_rub: amount!, term_months: term!, purpose, segment });
+    const app = await api.createApplication({
+      product_type: product?.product_type ?? null,
+      requested_amount_rub: amount!,
+      term_months: term!,
+      purpose,
+      segment,
+      consents: {
+        personal_data_processing: personalDataConsent,
+        credit_history_request: creditHistoryConsent,
+        version: CONSENT_VERSION,
+      },
+    });
     setStep(4);
     nav(`/applications/${app.application_id}`);
   });
@@ -104,7 +118,7 @@ export function Apply() {
           ? `${lim.who} — от ${lim.tMin} до ${monthsUpTo(lim.tMax)}`
           : null,
   };
-  const valid = !err.amount && !err.term;
+  const valid = !err.amount && !err.term && personalDataConsent && creditHistoryConsent;
   const c = user.company!;
   const f = user.financials!;
 
@@ -120,6 +134,12 @@ export function Apply() {
       ) : (
         <div className="row">
           <section className="card big grow">
+            <div className="panel">
+              <b>Оцениваем бизнес, а не личную кредитоспособность</b>
+              <span className="small muted">
+                Считаем риск по компании, её финансам и предпринимательской деятельности. У ИП ИНН совпадает с ИНН физлица — это техническая особенность, но решение относится только к бизнес-заявке.
+              </span>
+            </div>
             <div className="stack-s">
               <h2 className="h2">Продукт</h2>
               <span className="small muted">Не уверены — оставьте «Подобрать за меня», банк выберет продукт сам.</span>
@@ -158,6 +178,26 @@ export function Apply() {
                 disabled={!!product && product.segment !== 'both'}
               />
               {product && product.segment !== 'both' && <span className="xs muted">Продукт «{product.name}» — только для сегмента «{SEGMENT_NAME[product.segment].toLowerCase()}»</span>}
+            </div>
+            <div className="stack-s">
+              <span style={{ fontWeight: 600, fontSize: 14 }}>Согласия</span>
+              <Check
+                checked={personalDataConsent}
+                onChange={setPersonalDataConsent}
+                label="Согласие на обработку персональных данных"
+                hint="Нужно, чтобы проверить заявку и данные компании. Согласие можно отозвать после рассмотрения."
+              />
+              <Check
+                checked={creditHistoryConsent}
+                onChange={setCreditHistoryConsent}
+                label="Согласие на запрос кредитной истории в БКИ"
+                hint="Один запрос при рассмотрении этой заявки. Без подписки и автосписаний."
+              />
+              {tried && (!personalDataConsent || !creditHistoryConsent) && (
+                <span className="small" style={{ color: 'var(--c-negative-ink)', fontWeight: 600 }}>
+                  Отметьте оба согласия, чтобы отправить заявку
+                </span>
+              )}
             </div>
             {submit.error && (
               <ErrorState

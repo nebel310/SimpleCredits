@@ -203,7 +203,7 @@ components:
         Тело `POST /applications`. `product_type` опционален.
         Если профиль уже заполнен через `PATCH /auth/me`, блоки `company`/`financials`/`credit_history`
         можно не передавать. Иначе они обязательны — иначе `400`.
-      required: [requested_amount_rub, term_months, purpose, segment]
+      required: [requested_amount_rub, term_months, purpose, segment, consents]
       properties:
         product_type:
           type: string
@@ -216,6 +216,19 @@ components:
         company: { $ref: '#/components/schemas/SCompany' }
         financials: { $ref: '#/components/schemas/SFinancials' }
         credit_history: { $ref: '#/components/schemas/SCreditHistory' }
+        consents: { $ref: '#/components/schemas/SApplicationConsents' }
+
+    SApplicationConsents:
+      type: object
+      description: |
+        Согласия клиента на обработку персональных данных и запрос кредитной истории.
+        Оба флага обязательны. `accepted_at` добавляет сервер при создании заявки.
+      required: [personal_data_processing, credit_history_request, version]
+      properties:
+        personal_data_processing: { type: boolean, enum: [true] }
+        credit_history_request: { type: boolean, enum: [true] }
+        version: { type: string, minLength: 1, maxLength: 32, example: '2026-10-25' }
+        accepted_at: { type: string, format: date-time, readOnly: true }
 
     SApplication:
       type: object
@@ -324,7 +337,7 @@ components:
       required: [id, event_type, created_at]
       properties:
         id: { type: integer }
-        event_type: { type: string, enum: [created, enriched, scored, status_changed, failed] }
+        event_type: { type: string, enum: [created, enriched, scored, status_changed, manual_decision, failed] }
         payload:
           type: object
           additionalProperties: true
@@ -354,6 +367,9 @@ components:
           nullable: true
           description: "Снимок ответов моков: {egrul, fns, bki}, упавший = null"
         explanation: { type: string, nullable: true }
+        consents:
+          allOf: [{ $ref: '#/components/schemas/SApplicationConsents' }]
+          nullable: true
 
     SApplicationListResponse:
       type: object
@@ -413,6 +429,16 @@ components:
     # ============================================================
     # ADMIN
     # ============================================================
+
+    SAdminApplicationDecisionRequest:
+      type: object
+      description: |
+        Ручное решение банка по заявке в статусе `different` с решением модели `manual_review`.
+        Для остальных заявок возвращается `409`.
+      required: [decision]
+      properties:
+        decision: { type: string, enum: [approve, decline] }
+        comment: { type: string, maxLength: 1000, nullable: true }
 
     SAdminApplicationListResponse:
       type: object
@@ -939,6 +965,33 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/applications/{application_id}/decision:
+    post:
+      tags: [Admin]
+      summary: Ручное решение банка по заявке (только admin)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: application_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SAdminApplicationDecisionRequest' }
+      responses:
+        '200':
+          description: Заявка с обновлённым статусом
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SApplicationDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Ручное решение недоступно для текущего статуса или решения модели
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
 
   /admin/stats/overview:
     get:
