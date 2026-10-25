@@ -9,7 +9,7 @@ from schemas.auth import (
     SUserLogin, SUserUpdate, SUserListResponse,
     user_orm_to_schema
 )
-from utils.security import create_access_token, get_current_user, oauth2_scheme
+from utils.security import create_access_token, get_current_user, oauth2_scheme, require_admin
 from utils.pagination import encode_cursor, decode_cursor
 from minio.exceptions import StorageError, ObjectNotFoundError
 
@@ -236,6 +236,7 @@ async def update_current_user(
     responses={
         400: {"model": ValidationErrorResponse},
         401: {"model": ErrorResponse, "description": "Не авторизован"},
+        403: {"model": ErrorResponse, "description": "Только для администратора"},
         500: {"model": ErrorResponse}
     }
 )
@@ -243,9 +244,9 @@ async def get_users(
     cursor: str | None = None,
     direction: str = "forward",
     limit: int = 10,
-    current_user: UserOrm = Depends(get_current_user)
+    current_user: UserOrm = Depends(require_admin)
 ):
-    """Получение списка пользователей с пагинацией (курсорная)"""
+    """Список пользователей с профилями (только администратор, курсорная пагинация)"""
     if limit < 1 or limit > 50:
         raise HTTPException(status_code=400, detail="Лимит должен быть от 1 до 50")
     if direction not in ("forward", "backward"):
