@@ -267,9 +267,7 @@ async def test_stream_no_range(s3, patch_s3):
 
     async for _ in s3.download_range_stream("key"):
         pass
-    client.get_object.assert_called_once_with(
-        Bucket="test-bucket", Key="key", Range=None
-    )
+    client.get_object.assert_called_once_with(Bucket="test-bucket", Key="key")
 
 
 async def test_stream_not_found(s3, patch_s3):

@@ -1,3 +1,6 @@
+import re
+from urllib.parse import quote
+
 from fastapi import(
     APIRouter, Depends, HTTPException,
     UploadFile, status, File,
@@ -19,6 +22,39 @@ router = APIRouter(
     prefix="/files",
     tags=['Файлы']
 )
+
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
+
+def _safe_filename(name: str) -> str:
+    """Имя без кавычек и переводов строк — через имя файла нельзя подставить свой заголовок"""
+    return re.sub(r'[\r\n"]', '', name or '') or 'file'
+
+
+def _content_disposition(name: str) -> str:
+    """
+    Content-Disposition для любого имени, в том числе кириллического.
+    Заголовки HTTP — только latin-1, поэтому имя кладём дважды: латиницей
+    для старых клиентов и в filename* (RFC 5987) в UTF-8.
+    """
+    safe = _safe_filename(name)
+    stem, dot, ext = safe.rpartition(".")
+    if not dot:
+        stem, ext = safe, ""
+    to_ascii = lambda v: v.encode("ascii", "ignore").decode().strip()
+    ascii_name = (to_ascii(stem) or "file") + (f".{to_ascii(ext)}" if to_ascii(ext) else "")
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(safe)}"
+
+
+async def _get_accessible_file(file_id: int, current_user: UserOrm):
+    """
+    Возвращает метаданные файла, если он принадлежит пользователю или пользователь — админ.
+    Чужой файл выглядит как несуществующий (404), чтобы нельзя было перебирать id.
+    """
+    file_data = await FileRepository.get_file_info_by_id(file_id)
+    if file_data.uploaded_by != current_user.id and current_user.role != "admin":
+        raise ObjectNotFoundError(f"Файл с id = {file_id} не найден")
+    return file_data
 
 
 
@@ -43,6 +79,10 @@ async def upload_file(
         file_bytes = await file.read()
     except Exception:
         raise HTTPException(status_code=400, detail="Ошибка чтения файла")
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Файл пустой")
+    if len(file_bytes) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Файл больше 10 МБ")
 
     try:
         file_data = await FileRepository.upload_file(
@@ -64,41 +104,6 @@ async def upload_file(
     "/{file_id}",
     status_code=status.HTTP_200_OK,
     responses={
-        500: {"model": ValidationErrorResponse, "description": "Внутренняя ошибка сервера"},
-        404: {"model": ErrorResponse, "description": "Файл не найден"},
-        502: {"model": ErrorResponse, "description": "Ошибка хранилища"},
-    }
-)
-async def old_dowload_file(
-    file_id: int,
-    current_user: UserOrm = Depends(get_current_user)
-):
-    """Эндпоинт для тупого скачивания файла по его file_id"""
-    try:
-        file_bytes, file_data = await FileRepository.download_file_by_id(file_id)
-        
-        safe_filename = file_data.original_name.replace('"', '')
-        
-        headers = {
-            "Content-Disposition": f'attachment; filename="{safe_filename}"'
-        }
-        return Response(
-            content=file_bytes,
-            media_type=file_data.content_type or "application/octet-stream",
-            headers=headers,
-        )
-    except ObjectNotFoundError:
-        raise HTTPException(status_code=404, detail="Файл не найден")
-    except StorageError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    except Exception:
-        raise HTTPException(status_code=500, detail=f"Внутренняя ошибка сервера: {str(e)}")
-
-
-@router.get(
-    "/{file_id}",
-    status_code=status.HTTP_200_OK,
-    responses={
         200: {"description": "Полный файл или часть (если Range)"},
         206: {"description": "Частичное содержимое (Range)"},
         404: {"model": ErrorResponse, "description": "Файл не найден"},
@@ -111,15 +116,15 @@ async def download_file(
     request: Request,
     current_user: UserOrm = Depends(get_current_user)
 ):
-    """Скачивание файла чанками (Range)"""
+    """Скачивание своего файла целиком или по частям (Range)"""
     try:
-        file_info = await FileRepository.get_file_info_by_id(file_id)
+        file_info = await _get_accessible_file(file_id, current_user)
     except ObjectNotFoundError:
         raise HTTPException(status_code=404, detail="Файл не найден")
 
     file_size = file_info.size
     content_type = file_info.content_type or "application/octet-stream"
-    safe_filename = file_info.original_name.replace('"', '')
+    safe_filename = _safe_filename(file_info.original_name)
 
     range_header = request.headers.get("Range")
     if range_header:
@@ -145,7 +150,7 @@ async def download_file(
             "Content-Range": f"bytes {start}-{end}/{file_size}",
             "Accept-Ranges": "bytes",
             "Content-Length": str(content_length),
-            "Content-Disposition": f'attachment; filename="{safe_filename}"',
+            "Content-Disposition": _content_disposition(safe_filename),
         }
         return StreamingResponse(
             FileRepository.stream_file_range(file_id, start, end),
@@ -157,7 +162,7 @@ async def download_file(
         headers = {
             "Accept-Ranges": "bytes",
             "Content-Length": str(file_size),
-            "Content-Disposition": f'attachment; filename="{safe_filename}"',
+            "Content-Disposition": _content_disposition(safe_filename),
         }
         return StreamingResponse(
             FileRepository.stream_file_range(file_id),
@@ -184,9 +189,7 @@ async def get_file_info(
     """Эндпоинт возвращает метаданные файла по его id"""
     
     try:
-        file_data = await FileRepository.get_file_info_by_id(file_id)
-        
-        return file_data
+        return await _get_accessible_file(file_id, current_user)
     except ObjectNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
@@ -212,6 +215,7 @@ async def delete_file(
     """Эндпоинт для удаления файла"""
     
     try:
+        await _get_accessible_file(file_id, current_user)
         await FileRepository.delete_file_by_id(file_id)
         
         return SuccessResponse(detail="Файл успешно удалён")
