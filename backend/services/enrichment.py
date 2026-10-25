@@ -114,3 +114,60 @@ def merge_profile_with_enriched(
         financials=profile_financials,
         credit_history=credit_history,
     )
+
+
+# Словарь налоговых режимов: мок ФНС отдаёт кириллицу, а ML обучен на слагах
+# из обучающей таблицы пайплайна (usn / osn / patent / eshn). Без приведения
+# CatBoost увидел бы неизвестную категорию.
+TAX_REGIME_TO_ML = {
+    "УСН": "usn",
+    "ОСН": "osn",
+    "ПАТЕНТ": "patent",
+    "ЕСХН": "eshn",
+}
+
+
+def extract_ml_extra_features(
+    enriched: dict,
+) -> tuple[dict[str, float], dict[str, str]]:
+    """Собирает extra_*_features для ML из ответов мок-госуслуг.
+
+    Отдаём только те признаки, которые действительно есть в обучающей таблице
+    пайплайна и по которым источник даёт сопоставимые значения:
+
+    - bki.credit_score -> bki_credit_score. Главный признак модели (49% важности);
+      без него ML подставляет дефолт схемы и качество падает с AUC 0.76 до 0.55.
+    - fns.tax_debt_rub -> tax_debt_rub.
+    - fns.tax_regime -> tax_regime (со приведением словаря).
+
+    Намеренно НЕ отдаём:
+    - mass_address_flag / mass_manager_flag: в обучающей таблице они константны
+      (всегда 0), поэтому признак не несёт информации, а значения из мока
+      оказались бы вне распределения обучения;
+    - disqualified_manager_flag: мок всегда возвращает False, то есть значение
+      совпадает с дефолтом;
+    - reputation_rating: в обучении это шкала 0-5, а fns.reliability_score —
+      шкала 40-100; подмена исказила бы признак.
+    """
+    numeric: dict[str, float] = {}
+    categorical: dict[str, str] = {}
+
+    bki = enriched.get("bki")
+    if bki:
+        score = bki.get("credit_score")
+        if score is not None:
+            numeric["bki_credit_score"] = float(score)
+
+    fns = enriched.get("fns")
+    if fns:
+        debt = fns.get("tax_debt_rub")
+        if debt is not None:
+            numeric["tax_debt_rub"] = float(debt)
+
+        regime = fns.get("tax_regime")
+        if regime:
+            mapped = TAX_REGIME_TO_ML.get(str(regime).strip().upper())
+            if mapped:
+                categorical["tax_regime"] = mapped
+
+    return numeric, categorical

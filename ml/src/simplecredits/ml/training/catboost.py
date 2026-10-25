@@ -7,10 +7,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from catboost import CatBoostClassifier
 from sklearn.metrics import brier_score_loss, roc_auc_score
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import GroupShuffleSplit, train_test_split
 
 from simplecredits.ml.config import (
     DEFAULT_EXPERIMENT,
@@ -29,12 +30,29 @@ from simplecredits.ml.features.features import (
 from simplecredits.ml.scoring.model import CatBoostProbabilityModel
 from simplecredits.ml.training.train import build_evaluation, ks_statistic, save_model
 
-CATBOOST_MODEL_VERSION = "catboost-v1"
+CATBOOST_MODEL_VERSION = "catboost-v2"
 DEFAULT_CATBOOST_MODEL_PATH = Path("artifacts/catboost_model.joblib")
+
+# Колонка группировки для сплита: одна компания не должна попадать и в train,
+# и в test, иначе модель запоминает компанию, а не сигнал.
+GROUP_COLUMN = "company_id"
+
+# Параметры подобраны на данных пайплайна raw-as-of-v3 (5356 заявок,
+# 374 дефолта, 3652 компании). Сетка depth x l2_leaf_reg x learning_rate
+# просеяна GroupKFold(5) CV с группировкой по company_id.
+#
+# Число итераций выбрано по CV-кривой AUC (100/150/200/250/300/400/600):
+# плато на 250 итерациях (CV AUC 0.7553 +- 0.0253).
+#
+# Early stopping здесь не используется намеренно. Валидация, вырезанная из
+# train, слишком мала (~75 позитивов), из-за чего best_iteration скачет от 19
+# до 323 между сплитами и в среднем даёт 0.7620 против 0.7753 у фиксированных
+# 250 итераций (замер по 5 групповым сплитам). Фиксированное значение,
+# выбранное по CV, устойчивее. Held-out тест по 5 сидам: 0.7725 +- 0.0152.
 CATBOOST_PARAMS: dict[str, Any] = {
-    "iterations": 400,
+    "iterations": 250,
     "learning_rate": 0.03,
-    "depth": 2,
+    "depth": 3,
     "l2_leaf_reg": 10.0,
     "loss_function": "Logloss",
     "eval_metric": "AUC",
@@ -57,6 +75,26 @@ def _prepare_frame(
     return data.reset_index(drop=True)
 
 
+def _has_groups(data: pd.DataFrame) -> bool:
+    return GROUP_COLUMN in data.columns and data[GROUP_COLUMN].notna().any()
+
+
+def _grouped_indices(
+    data: pd.DataFrame,
+    seed: int,
+    test_size: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Индексы train/test так, чтобы компания целиком попадала в одну часть.
+
+    Без этого одна и та же компания оказывается и в обучении, и в контроле,
+    а метрики показывают запоминание компании вместо обобщающей способности.
+    """
+    groups = data[GROUP_COLUMN].astype(str).to_numpy()
+    splitter = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=seed)
+    train_index, test_index = next(splitter.split(data, data[TARGET_COLUMN], groups=groups))
+    return train_index, test_index
+
+
 def _split_dataset(
     data: pd.DataFrame,
     seed: int,
@@ -64,6 +102,14 @@ def _split_dataset(
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
     features = build_features(data)
     target = data[TARGET_COLUMN].astype(int)
+    if _has_groups(data):
+        train_index, test_index = _grouped_indices(data, seed, test_size)
+        return (
+            features.iloc[train_index],
+            features.iloc[test_index],
+            target.iloc[train_index],
+            target.iloc[test_index],
+        )
     return train_test_split(
         features,
         target,
@@ -130,6 +176,8 @@ def _fit_artifact(
             "default_rate": round(float(data[TARGET_COLUMN].mean()), 4),
             "seed": seed,
             "test_size": test_size,
+            "split": "grouped_by_company" if _has_groups(data) else "stratified_random",
+            "n_companies": int(data[GROUP_COLUMN].nunique()) if _has_groups(data) else None,
             "params": {
                 key: value
                 for key, value in resolved_params.items()

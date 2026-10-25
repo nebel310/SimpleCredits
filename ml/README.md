@@ -152,7 +152,7 @@ python -m simplecredits.ml.data.pipeline --db data/raw/simplecredits_raw.db \
 
 ### Линейный скоркард (LogisticRegression)
 
-`training/train.py`, версия `scorecard-linear-v1`:
+`training/train.py`, версия `scorecard-linear-v1`. Baseline: на данных пайплайна проигрывает CatBoost (0.7367 против 0.7753 AUC на одинаковых групповых сплитах), но остаётся объяснимой линейной моделью и используется как fallback, если артефакт CatBoost недоступен.
 
 - sklearn `Pipeline`: `ColumnTransformer` (StandardScaler для числовых, OneHotEncoder для категориальных) + `LogisticRegression` (`C = 0.003`, сильная L2-регуляризация — 170+ признаков при относительно небольшом числе событий легко переобучаются).
 - Метрики: ROC-AUC (train/test), Brier score, confusion matrix, кривая покрытия по риск-грейдам, распределение политических решений.
@@ -165,15 +165,39 @@ simplecredits-train --samples 20000 --seed 42 --out artifacts/model.joblib --no-
 
 ### CatBoost
 
-`training/catboost.py`, версия `catboost-v1`:
+`training/catboost.py`, версия `catboost-v2` — боевая модель.
 
-- 400 итераций, `depth = 2`, `lr = 0.03`, `l2_leaf_reg = 10` — намеренно мелкая и сильно регуляризованная модель под синтетический/малый датасет.
-- Категориальные признаки передаются нативно (`cat_features`).
-- Те же метрики, что у скоркарда; reason-коды считаются через SHAP-вклады CatBoost.
+Параметры: 250 итераций, `depth = 3`, `lr = 0.03`, `l2_leaf_reg = 10`. Категориальные признаки передаются нативно (`cat_features`); reason-коды считаются через SHAP-вклады CatBoost.
+
+**Методология подбора** (зафиксирована в комментариях к `CATBOOST_PARAMS`):
+
+- **Сплит групповой по `company_id`.** Одна компания целиком попадает либо в train, либо в test. При случайном сплите 618 компаний оказывались в обеих частях, и модель запоминала компанию вместо сигнала.
+- **Сетка** `depth` × `l2_leaf_reg` × `learning_rate` просеяна GroupKFold(5) CV; оптимум — `depth=3, l2=10, lr=0.03` (CV AUC 0.7600).
+- **Число итераций выбрано по CV-кривой** (100/150/200/250/300/400/600), плато на 250.
+- **Early stopping отключён намеренно.** Валидация, вырезанная из train, слишком мала (~75 позитивов), из-за чего `best_iteration` скачет от 19 до 323 между сплитами. Замер по 5 групповым сплитам: early stopping даёт 0.7620 против 0.7753 у фиксированных 250 итераций.
+
+**Качество на held-out групповом тесте** (1361 заявка, 101 дефолт, 0 пересекающихся компаний):
+
+| Метрика | Значение |
+|---|---|
+| ROC-AUC | 0.7868 (по 5 сидам: 0.7725 ± 0.0152) |
+| Gini | 0.5736 |
+| KS | 0.4744 |
+| Brier | 0.0638 |
+
+Риск-грейды хорошо разделены и откалиброваны: A 0.0% → B 2.1% → C 10.4% → D 17.0% → E 28.6% фактических дефолтов.
+
+CatBoost выбран не произвольно: на одинаковых групповых сплитах он выигрывает у линейного скоркарда на всех 5 сидах (0.7753 против 0.7367 в среднем).
 
 ```bash
+# на данных пайплайна (путь боевой модели):
 simplecredits-catboost --data data/training_table.csv --out artifacts/catboost_model.joblib
+
+# на синтетике (сплит автоматически стратифицированный случайный — в ней нет company_id):
+simplecredits-catboost --samples 20000 --seed 42 --no-tracking
 ```
+
+Метаданные артефакта содержат `training.split` (`grouped_by_company` или `stratified_random`) и `training.n_companies`, чтобы способ обучения был воспроизводим.
 
 ### Артефакт модели
 
@@ -319,11 +343,16 @@ Env по умолчанию: `MODEL_PATH=/app/ml/artifacts/model.joblib`, `GRPC_
 
 ## Интеграция с backend
 
-- Backend (`backend/scoring/client.py`) подключается к сервису по адресу из env `SCORING_GRPC_ADDR` (по умолчанию `localhost:50051`).
-- Pydantic-схема `SScoreApplicationRequest` (`backend/schemas/scoring.py`) зеркалит proto, включая `extra_numeric_features` / `extra_categorical_features` (до 512 ключей каждое).
-- `backend/scoring/mapping.py` конвертирует HTTP-модели в proto и обратно; маппинг покрыт unit-тестами.
+- Backend подключается к сервису через `backend/ml_grpc/client.py` по адресу из env `ML_GRPC_HOST` (default `ml`), `ML_GRPC_PORT` (default `50051`), `ML_GRPC_TIMEOUT` (default `10.0`).
+- Pydantic-схема `SScoreApplicationRequest` (`backend/schemas/applications.py`) зеркалит proto, включая `extra_numeric_features` / `extra_categorical_features` (до 512 ключей каждое).
+- `backend/ml_grpc/mappers.py` конвертирует HTTP-модели в proto и обратно; `schema_to_proto_score_request` прокидывает `extra_*` map-поля в proto.
+- Обогащение через мок-госуслуги (`services/enrichment.py`) собирает расширенные признаки в `extract_ml_extra_features()`: `bki.credit_score → bki_credit_score`, `fns.tax_debt_rub → tax_debt_rub`, `fns.tax_regime → tax_regime` (с приведением словаря `УСН → usn`). Сервис заявки (`services/application.py`) подставляет их в `scoring_request` перед вызовом ML.
 
-Таким образом внешний REST-клиент отправляет заявку в backend, а backend выступает gRPC-клиентом ML-сервиса.
+Таким образом внешний REST-клиент отправляет заявку в backend, backend обогащает её через мок-ЕГРЮЛ/ФНС/БКИ и выступает gRPC-клиентом ML-сервиса.
+
+**Почему это важно для качества модели.** `bki_credit_score` — самый весомый признак CatBoost (~49% важности). Без него ML подставляет дефолт схемы (600), и AUC падает с ~0.76 до ~0.55, а ~78% заявок уходит в грейд E. Поэтому обогащение обязано доходить до ML — `test_prod_model.py` и `test_enrichment_service.py::test_extract_ml_extra_features_*` это фиксируют.
+
+Прод-модель — закоммиченный артефакт `artifacts/catboost_model.joblib` (catboost-v2, 207 признаков). Он кладётся в образ при сборке (`ml/Dockerfile`), а не обучается на синтетике; сборка проверяет тип модели и число признаков и падает при несоответствии.
 
 ## Тесты
 
@@ -352,8 +381,10 @@ pytest            # 30 тестов
 
 | Переменная | По умолчанию | Где используется |
 |---|---|---|
-| `MODEL_PATH` | `artifacts/model.joblib` | serving: путь к артефакту модели |
+| `MODEL_PATH` | `artifacts/catboost_model.joblib` | serving: путь к артефакту модели |
 | `GRPC_PORT` | `50051` | serving: порт gRPC |
 | `GRPC_WORKERS` | `8` | serving: размер thread pool |
 | `MLFLOW_TRACKING_URI` | `./mlruns` | training/tracking: адрес MLflow |
-| `SCORING_GRPC_ADDR` | `localhost:50051` | backend: адрес ML-сервиса |
+| `ML_GRPC_HOST` | `ml` | backend: хост ML-сервиса |
+| `ML_GRPC_PORT` | `50051` | backend: порт ML-сервиса |
+| `ML_GRPC_TIMEOUT` | `10.0` | backend: таймаут gRPC-вызова, сек |

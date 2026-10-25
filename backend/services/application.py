@@ -14,7 +14,7 @@ from schemas.applications import (
     SScoreApplicationRequest,
 )
 from schemas.auth import _build_company, _build_credit_history, _build_financials
-from services.enrichment import enrich
+from services.enrichment import enrich, extract_ml_extra_features
 from services.exceptions import ProfileIncompleteError
 from services.scoring import decision_to_status
 from services.ws_manager import ws_manager
@@ -72,6 +72,17 @@ class ApplicationService:
         enriched = await enrich(company.inn)
         await ApplicationRepository.save_enriched(application.application_id, enriched)
 
+        # Обогащение должно дойти до ML: без bki_credit_score модель подставляет
+        # дефолт схемы и качество падает с AUC ~0.76 до ~0.55. Заявка в БД хранит
+        # снапшот профиля (request_for_ml), а на скоринг уходит копия с признаками.
+        extra_numeric, extra_categorical = extract_ml_extra_features(enriched)
+        scoring_request = request_for_ml.model_copy(
+            update={
+                "extra_numeric_features": extra_numeric,
+                "extra_categorical_features": extra_categorical,
+            }
+        )
+
         sources = [k for k, v in enriched.items() if v is not None]
         await ws_manager.broadcast(
             refreshed.id,
@@ -86,7 +97,7 @@ class ApplicationService:
 
         try:
             proto_request = schema_to_proto_score_request(
-                request_for_ml, application.application_id
+                scoring_request, application.application_id
             )
             proto_response = await client.score_application(proto_request)
         except GrpcServiceError as exc:

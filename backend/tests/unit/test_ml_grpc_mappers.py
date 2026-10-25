@@ -262,6 +262,31 @@ def test_schema_to_proto_score_request():
     assert proto.credit_history.active_obligations_count == 2
 
 
+def test_schema_to_proto_score_request_carries_extra_features():
+    """extra_*_features из обогащения доходят до proto"""
+    request = make_request()
+    request = request.model_copy(
+        update={
+            "extra_numeric_features": {"bki_credit_score": 742.0, "tax_debt_rub": 15000.0},
+            "extra_categorical_features": {"tax_regime": "usn"},
+        }
+    )
+
+    proto = schema_to_proto_score_request(request, "abc-extra")
+
+    assert proto.extra_numeric_features["bki_credit_score"] == 742.0
+    assert proto.extra_numeric_features["tax_debt_rub"] == 15000.0
+    assert proto.extra_categorical_features["tax_regime"] == "usn"
+
+
+def test_schema_to_proto_score_request_extra_features_default_empty():
+    """Без extra_*_features в proto уходят пустые map'ы, а не ошибка"""
+    proto = schema_to_proto_score_request(make_request(), "abc-empty")
+
+    assert dict(proto.extra_numeric_features) == {}
+    assert dict(proto.extra_categorical_features) == {}
+
+
 def test_proto_to_reason_code_positive():
     """Конвертирует proto ReasonCode с positive impact"""
     proto = scoring_pb2.ReasonCode(

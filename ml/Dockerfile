@@ -2,7 +2,9 @@ FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DEFAULT_TIMEOUT=120 \
+    PIP_RETRIES=10
 
 WORKDIR /app
 
@@ -16,14 +18,22 @@ COPY proto /app/proto
 COPY ml/pyproject.toml /app/ml/pyproject.toml
 COPY ml/src /app/ml/src
 COPY ml/scripts /app/ml/scripts
+# Production model (catboost-v2), trained on the raw-as-of-v3 pipeline table.
+COPY ml/artifacts/catboost_model.joblib /app/ml/artifacts/catboost_model.joblib
 
 WORKDIR /app/ml
 
 RUN python scripts/generate_proto.py \
-    && pip install --no-build-isolation -e . \
-    && python -m simplecredits.ml.training.train --out /app/ml/artifacts/model.joblib --no-tracking
+    && pip install --no-build-isolation -e .
 
-ENV MODEL_PATH=/app/ml/artifacts/model.joblib \
+# Fail the build instead of silently serving a different model at runtime.
+RUN python -c "from simplecredits.ml.scoring.model import CreditScorer; \
+s = CreditScorer.load('/app/ml/artifacts/catboost_model.joblib'); \
+assert s.model_type == 'catboost', s.model_type; \
+assert len(s.feature_columns) == 207, len(s.feature_columns); \
+print('model verified:', s.model_version, s.model_type, len(s.feature_columns), 'features')"
+
+ENV MODEL_PATH=/app/ml/artifacts/catboost_model.joblib \
     GRPC_PORT=50051 \
     GRPC_WORKERS=8
 

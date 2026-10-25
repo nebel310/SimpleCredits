@@ -69,6 +69,12 @@ class SScoreApplicationRequest(BaseModel):
     company: SCompany
     financials: SFinancials
     credit_history: SCreditHistory
+    # Расширенные признаки для ML. Клиент их не заполняет — их собирает бэкенд
+    # из ответов мок-госуслуг (services.enrichment.extract_ml_extra_features).
+    # Ключи должны входить в RAW_NUMERIC_FEATURES / CATEGORICAL_FEATURES на
+    # стороне ML, иначе скоринг отклонит запрос с unknown features.
+    extra_numeric_features: dict[str, float] = Field(default_factory=dict, max_length=512)
+    extra_categorical_features: dict[str, str] = Field(default_factory=dict, max_length=512)
 
 
 class SReasonCode(BaseModel):

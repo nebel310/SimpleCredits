@@ -10,6 +10,13 @@ venv/
 
 # ML artifacts and generated data
 ml/artifacts/*.joblib
+# The production scoring model is committed on purpose: it is small (80 KB),
+# training is deterministic for a fixed seed, and shipping it keeps builds
+# reproducible without regenerating the raw database inside the image.
+# Retrain with:
+#   simplecredits-catboost --data data/training_table.csv \
+#     --out artifacts/catboost_model.joblib
+!ml/artifacts/catboost_model.joblib
 ml/data/*.csv
 ml/data/*.parquet
 ml/data/*.manifest.json
@@ -24,6 +31,11 @@ mlflow/
 data/raw/csv/
 data/raw/json/
 data/raw/large/
+# Large training datasets (>100 MB, above GitHub's per-file limit).
+# Regenerate with:
+#   python tools/generate_raw_data.py --out data/raw/train5k --companies 5000 \
+#     --months 12 --seed 2026 --no-csv --no-json --no-documents
+data/raw/train5k/
 
 # OS / IDE
 .DS_Store
