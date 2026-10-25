@@ -47,3 +47,46 @@ async def test_segment_is_derived_from_company(e2e_client):
     r = await _post(client, headers, segment="micro")
     assert r.status_code == 201
     assert r.json()["application"]["segment"] == "small"
+
+
+async def test_auto_pick_returns_selected_product(e2e_client):
+    """Без выбора продукта банк подбирает подходящий: малый бизнес, оборотка 1,5 млн на 24 мес."""
+    client, _ = e2e_client
+    headers = await _setup_full_profile(client, "auto@example.com")
+    r = await client.post("/applications", json=make_body(None), headers=headers)
+    assert r.status_code == 201
+    data = r.json()
+    assert data["product_selected_by_system"] is True
+    assert data["status"] == "different"
+    assert data["application"]["product_type"] in ("term_loan", "credit_line", "overdraft")
+    assert data["application"]["product_type"] == "credit_line"  # самая низкая ставка из подходящих
+
+
+async def test_auto_pick_respects_purpose(e2e_client):
+    client, _ = e2e_client
+    headers = await _setup_full_profile(client, "auto-eq@example.com")
+    body = make_body(None)
+    body.update(purpose="equipment", requested_amount_rub=35_000_000, term_months=60)
+    r = await client.post("/applications", json=body, headers=headers)
+    assert r.json()["application"]["product_type"] == "leasing"
+
+
+async def test_no_suitable_product_declined_with_reason(e2e_client):
+    """Ни один продукт не подходит — отказ с причиной и пояснением, заявка сохраняется"""
+    client, _ = e2e_client
+    headers = await _setup_full_profile(client, "none@example.com")
+    body = make_body(None)
+    body.update(requested_amount_rub=90_000_000)
+    r = await client.post("/applications", json=body, headers=headers)
+    assert r.status_code == 201
+    data = r.json()
+    assert data["status"] == "declined"
+    assert data["scoring_result"]["decision"]["reason_codes"] == ["NO_SUITABLE_PRODUCT"]
+    assert "нет подходящего продукта" in data["explanation"]
+
+
+async def test_chosen_product_is_not_marked_as_selected_by_system(e2e_client):
+    client, _ = e2e_client
+    headers = await _setup_full_profile(client, "chosen@example.com")
+    r = await client.post("/applications", json=make_body("term_loan"), headers=headers)
+    assert r.json()["product_selected_by_system"] is False and r.json()["status"] == "confirmed"

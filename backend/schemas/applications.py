@@ -172,6 +172,7 @@ class SApplicationDetail(BaseModel):
     """Полные данные заявки с результатом скоринга"""
     application_id: str
     status: ApplicationStatus
+    product_selected_by_system: bool = False
     created_at: datetime
     updated_at: datetime
     application: SApplication
@@ -199,6 +200,7 @@ def application_orm_to_schema(application) -> SApplicationDetail:
     return SApplicationDetail(
         application_id=application.application_id,
         status=application.status,
+        product_selected_by_system=bool(getattr(application, "product_selected_by_system", False)),
         created_at=application.created_at,
         updated_at=application.updated_at,
         application=SApplication(

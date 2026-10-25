@@ -16,6 +16,9 @@ class ApplicationOrm(Model):
     status: Mapped[str] = mapped_column(nullable=False, default="pending", server_default="pending")
 
     product_type: Mapped[str | None] = mapped_column(nullable=True)
+    # True — продукт подобрал банк (клиент его не выбирал). Новые колонки только nullable:
+    # в существующую базу они добавляются при старте (database.add_missing_columns)
+    product_selected_by_system: Mapped[bool | None] = mapped_column(nullable=True)
     requested_amount_rub: Mapped[int] = mapped_column(nullable=False)
     term_months: Mapped[int] = mapped_column(nullable=False)
     purpose: Mapped[str] = mapped_column(nullable=False)

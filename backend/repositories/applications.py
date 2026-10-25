@@ -17,11 +17,15 @@ class ApplicationRepository:
         user_id: int,
         data: SScoreApplicationRequest,
         product_type: str | None = None,
+        product_selected_by_system: bool = False,
     ) -> ApplicationOrm:
         """Создаёт заявку со снимком профиля и пишет событие created"""
         application_id = uuid.uuid4().hex
         now = datetime.now(timezone.utc)
         actual_product_type = product_type if product_type is not None else data.application.product_type
+        if product_selected_by_system:
+            # банк подобрал продукт или не нашёл подходящего (тогда None) — берём ровно это
+            actual_product_type = product_type
 
         async with new_session() as session:
             application = ApplicationOrm(
@@ -29,6 +33,7 @@ class ApplicationRepository:
                 user_id=user_id,
                 status="pending",
                 product_type=actual_product_type,
+                product_selected_by_system=product_selected_by_system,
                 requested_amount_rub=data.application.requested_amount_rub,
                 term_months=data.application.term_months,
                 purpose=data.application.purpose,

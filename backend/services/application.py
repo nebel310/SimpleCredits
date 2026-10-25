@@ -7,19 +7,43 @@ from models.applications import ApplicationOrm
 from models.auth import UserOrm
 from repositories.applications import ApplicationRepository
 from repositories.auth import UserRepository
+from repositories.products import ProductRepository
 from schemas.applications import (
     DEFAULT_PRODUCT_TYPE,
     SApplication,
     SApplicationCreateRequest,
+    SDecisionResult,
     SScoreApplicationRequest,
+    application_orm_to_schema,
 )
 from schemas.auth import _build_company, _build_credit_history, _build_financials
 from services.enrichment import enrich
-from repositories.products import ProductRepository
 from services.exceptions import ProductMismatchError, ProfileIncompleteError
-from services.products import Applicant, company_age_months, derive_segment, mismatch_reasons
+from services.products import (
+    Applicant,
+    company_age_months,
+    derive_segment,
+    mismatch_reasons,
+    no_product_explanation,
+    pick_product,
+)
 from services.scoring import decision_to_status
 from services.ws_manager import ws_manager
+
+
+NO_SUITABLE_PRODUCT = "NO_SUITABLE_PRODUCT"
+
+
+def _applicant_from_snapshot(application: ApplicationOrm) -> Applicant:
+    """Параметры заявки для правил каталога — из снимка, сохранённого при подаче"""
+    return Applicant(
+        segment=application.segment,
+        purpose=application.purpose,
+        amount_rub=application.requested_amount_rub,
+        term_months=application.term_months,
+        legal_form=application.legal_form,
+        age_months=company_age_months(application.registration_date, application.submitted_at),
+    )
 
 
 class ApplicationService:
@@ -32,7 +56,7 @@ class ApplicationService:
         create_request: SApplicationCreateRequest,
         client: ScoringClient,
     ) -> ApplicationOrm:
-        """Создаёт заявку, обогащает, скорит, сохраняет результат и возвращает ORM"""
+        """Проверяет и создаёт заявку, затем обрабатывает её (обогащение, скоринг, решение)"""
         await cls._maybe_update_profile(user, create_request)
 
         refreshed = await UserRepository.get_user_by_id(user.id)
@@ -68,35 +92,47 @@ class ApplicationService:
             reasons = mismatch_reasons(chosen, applicant)
             if reasons:
                 raise ProductMismatchError(chosen.name, reasons)
+            selected_by_system = False
+        else:
+            # Клиент не выбрал продукт — подбирает банк. Если не подошёл ни один,
+            # заявка всё равно создаётся и получает отказ с причиной NO_SUITABLE_PRODUCT
+            chosen = pick_product(products, applicant)
+            selected_by_system = True
 
         application_schema = SApplication(
-            product_type=create_request.product_type or DEFAULT_PRODUCT_TYPE,
+            product_type=chosen.product_type if chosen else DEFAULT_PRODUCT_TYPE,
             requested_amount_rub=create_request.requested_amount_rub,
             term_months=create_request.term_months,
             purpose=create_request.purpose,
             segment=segment,
             submitted_at=datetime.now(timezone.utc),
         )
-
-        request_for_ml = SScoreApplicationRequest(
+        snapshot = SScoreApplicationRequest(
             application=application_schema,
             company=company,
             financials=financials,
             credit_history=credit_history,
         )
-
         application = await ApplicationRepository.create(
             user_id=refreshed.id,
-            data=request_for_ml,
-            product_type=create_request.product_type,
+            data=snapshot,
+            product_type=chosen.product_type if chosen else None,
+            product_selected_by_system=selected_by_system,
         )
+        return await cls.process(application, client)
 
-        enriched = await enrich(company.inn)
+    @classmethod
+    async def process(cls, application: ApplicationOrm, client: ScoringClient) -> ApplicationOrm:
+        """
+        Обрабатывает уже сохранённую заявку: ЕГРЮЛ/ФНС/БКИ, скоринг, решение.
+        Всё берётся из снимка в заявке, поэтому обработку можно повторить.
+        """
+        enriched = await enrich(application.inn)
         await ApplicationRepository.save_enriched(application.application_id, enriched)
 
         sources = [k for k, v in enriched.items() if v is not None]
         await ws_manager.broadcast(
-            refreshed.id,
+            application.user_id,
             {
                 "type": "event",
                 "application_id": application.application_id,
@@ -106,15 +142,21 @@ class ApplicationService:
             },
         )
 
+        detail = application_orm_to_schema(application)
+        request_for_ml = SScoreApplicationRequest(
+            application=detail.application,
+            company=detail.company,
+            financials=detail.financials,
+            credit_history=detail.credit_history,
+        )
+
         try:
-            proto_request = schema_to_proto_score_request(
-                request_for_ml, application.application_id
-            )
+            proto_request = schema_to_proto_score_request(request_for_ml, application.application_id)
             proto_response = await client.score_application(proto_request)
         except GrpcServiceError as exc:
             await ApplicationRepository.mark_failed(application.application_id, str(exc))
             await ws_manager.broadcast(
-                refreshed.id,
+                application.user_id,
                 {
                     "type": "status_changed",
                     "application_id": application.application_id,
@@ -126,17 +168,28 @@ class ApplicationService:
             raise
 
         response = proto_to_schema_response(proto_response)
+        explanation = None
+        if application.product_type is None:
+            # Ни один продукт не подошёл: оценка риска сохраняется для банка,
+            # но решение — отказ с понятной причиной
+            response.decision = SDecisionResult(
+                decision="decline", reason_codes=[NO_SUITABLE_PRODUCT], conditions=[]
+            )
+            explanation = no_product_explanation(_applicant_from_snapshot(application))
+
         decision_value = response.decision.decision if response.decision else None
-        status = decision_to_status(decision_value, create_request.product_type)
+        client_chose_product = None if application.product_selected_by_system else application.product_type
+        status = decision_to_status(decision_value, client_chose_product)
 
         updated = await ApplicationRepository.update_scoring(
             application_id=application.application_id,
             scoring_result=response.model_dump(mode="json"),
             status=status,
+            explanation=explanation,
         )
 
         await ws_manager.broadcast(
-            refreshed.id,
+            application.user_id,
             {
                 "type": "status_changed",
                 "application_id": application.application_id,
