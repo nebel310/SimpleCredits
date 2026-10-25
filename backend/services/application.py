@@ -17,7 +17,7 @@ from schemas.applications import (
     application_orm_to_schema,
 )
 from schemas.auth import _build_company, _build_credit_history, _build_financials
-from services.enrichment import enrich
+from services.enrichment import _credit_history_from_bki, enrich
 from services.exceptions import ProductMismatchError, ProfileIncompleteError
 from services.products import (
     Applicant,
@@ -182,6 +182,13 @@ class ApplicationService:
         """
         enriched = await enrich(application.inn)
         await ApplicationRepository.save_enriched(application.application_id, enriched)
+
+        # Кредитную историю действующего клиента банк берёт из БКИ (USERFLOW §6, п. 5).
+        # Снимок заявки обновляется, чтобы модель, карточка и блок БКИ показывали одно и то же.
+        # Если БКИ не ответил — остаётся история из профиля.
+        bki_history = _credit_history_from_bki(enriched)
+        if bki_history is not None:
+            application = await ApplicationRepository.save_credit_history(application.application_id, bki_history) or application
 
         sources = [k for k, v in enriched.items() if v is not None]
         await ws_manager.broadcast(

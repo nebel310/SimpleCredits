@@ -5,7 +5,7 @@ from sqlalchemy import select, update
 
 from database import new_session
 from models.applications import ApplicationOrm, ApplicationEventOrm
-from schemas.applications import SScoreApplicationRequest
+from schemas.applications import SCreditHistory, SScoreApplicationRequest
 
 
 class ApplicationRepository:
@@ -171,6 +171,18 @@ class ApplicationRepository:
                     payload={"status": to_status, **(payload or {})},
                     created_at=now,
                 )
+            )
+            await session.commit()
+        return await cls.get_by_application_id(application_id)
+
+    @classmethod
+    async def save_credit_history(cls, application_id: str, credit_history: SCreditHistory) -> ApplicationOrm | None:
+        """Перезаписывает кредитную историю в снимке заявки (данные БКИ на момент проверки)"""
+        async with new_session() as session:
+            await session.execute(
+                update(ApplicationOrm)
+                .where(ApplicationOrm.application_id == application_id)
+                .values(**credit_history.model_dump(), updated_at=datetime.now(timezone.utc))
             )
             await session.commit()
         return await cls.get_by_application_id(application_id)
