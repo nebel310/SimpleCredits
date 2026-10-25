@@ -99,3 +99,29 @@ async def test_admin_stats_and_filter_by_outcome(e2e_client):
     assert len(only) == 1 and only[0]["outcome"] == "MANUAL_REVIEW"
     confirmed = (await client.get("/admin/applications?status=confirmed", headers=admin)).json()["applications"]
     assert len(confirmed) == 1
+
+
+async def test_explanation_and_actions_per_outcome(e2e_client):
+    """Понятный текст и доступные действия для каждого исхода; технических кодов в тексте нет"""
+    client, servicer = e2e_client
+    headers = await _setup_full_profile(client, "explain@example.com")
+
+    respond(servicer, scoring_pb2.DECISION_APPROVE)
+    d = (await client.post("/applications", json=make_body("term_loan"), headers=headers)).json()
+    assert d["explanation"].startswith("Одобрено на запрошенных условиях") and d["actions"] == ["accept", "reject"]
+
+    d = (await client.post("/applications", json=make_body(None), headers=headers)).json()
+    assert d["explanation"].startswith("Подобрали продукт") and d["actions"] == ["accept", "reject"]
+
+    respond(servicer, scoring_pb2.DECISION_APPROVE_WITH_CONDITIONS, recommended=1_000_000)
+    d = (await client.post("/applications", json=make_body("term_loan"), headers=headers)).json()
+    assert "вместо" in d["explanation"] and "60% годовой выручки" in d["explanation"]
+    assert "LOAN_TO_REVENUE" not in d["explanation"]
+
+    respond(servicer, scoring_pb2.DECISION_MANUAL_REVIEW)
+    d = (await client.post("/applications", json=make_body("term_loan"), headers=headers)).json()
+    assert d["explanation"].startswith("Нужна дополнительная проверка") and d["actions"] == []
+
+    respond(servicer, scoring_pb2.DECISION_DECLINE)
+    d = (await client.post("/applications", json=make_body("term_loan"), headers=headers)).json()
+    assert d["explanation"].startswith("Банк отказал") and d["actions"] == []

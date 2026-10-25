@@ -116,7 +116,10 @@ async def test_ws_connect_and_receive_status_confirmed(real_server):
             status_msg = next(m for m in messages if m["type"] == "status_changed")
             assert status_msg["status"] == "confirmed"
             assert status_msg["application_id"] == app_id
-            assert status_msg["payload"]["score"] == 712
+            # клиенту по WebSocket — статус, объяснение и действия, без балла и PD модели
+            assert "score" not in status_msg["payload"] and "reason_codes" not in status_msg["payload"]
+            assert status_msg["payload"]["actions"] == ["accept", "reject"]
+            assert status_msg["payload"]["explanation"].startswith("Одобрено")
 
 
 async def test_ws_receives_failed_on_ml_down(real_server):

@@ -5,7 +5,7 @@ from models.applications import ApplicationOrm
 from repositories.applications import ApplicationRepository
 from repositories.products import ProductRepository
 from schemas.applications import SBankDecisionRequest
-from services.deal import DealError, _notify
+from services.deal import DealError, notify_status
 from services.products import build_offer, mismatch_reasons, pick_product, with_amount
 
 
@@ -65,5 +65,5 @@ async def decide_manual_review(application: ApplicationOrm, body: SBankDecisionR
     )
     if updated is None:
         raise DealError("Статус заявки уже изменился — обновите страницу")
-    await _notify(updated)
+    await notify_status(updated)
     return updated

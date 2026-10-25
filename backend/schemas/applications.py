@@ -19,6 +19,23 @@ ApplicationStatus = Literal[
 ]
 # Уточнение статуса different: что именно предлагает банк
 ApplicationOutcome = Literal["ALTERNATIVE_PRODUCT", "COUNTER_OFFER", "MANUAL_REVIEW"]
+# Что клиент может сделать с заявкой сейчас (кнопки на фронте)
+ApplicationAction = Literal["accept", "reject", "issue", "retry"]
+ACCEPTABLE_OUTCOMES = ("ALTERNATIVE_PRODUCT", "COUNTER_OFFER")
+
+
+def available_actions(status: str, outcome: str | None, has_offer: bool) -> list[str]:
+    """
+    Действия клиента по заявке. Одно правило для API, кнопок и проверок на сервере:
+    принять/отказаться — одобрение или предложение банка с оффером; оформить — после
+    принятия; повторить — после технической ошибки. Ручная проверка — не оффер.
+    """
+    if status == "failed":
+        return ["retry"]
+    if status == "accepted":
+        return ["issue", "reject"]
+    offer_ready = has_offer and (status == "confirmed" or (status == "different" and outcome in ACCEPTABLE_OUTCOMES))
+    return ["accept", "reject"] if offer_ready else []
 
 DEFAULT_PRODUCT_TYPE: ProductType = "term_loan"
 
@@ -223,6 +240,7 @@ class SApplicationDetail(BaseModel):
     contract_number: str | None = None
     issued_at: datetime | None = None
     bank_decision: SBankDecision | None = None
+    actions: list[ApplicationAction] = []
     created_at: datetime
     updated_at: datetime
     application: SApplication
@@ -256,6 +274,9 @@ def application_orm_to_schema(application) -> SApplicationDetail:
         contract_number=getattr(application, "contract_number", None),
         issued_at=getattr(application, "issued_at", None),
         bank_decision=getattr(application, "bank_decision", None),
+        actions=available_actions(
+            application.status, getattr(application, "outcome", None), bool(getattr(application, "offer", None))
+        ),
         created_at=application.created_at,
         updated_at=application.updated_at,
         application=SApplication(

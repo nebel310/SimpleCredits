@@ -32,6 +32,8 @@ from services.products import (
     pick_product,
     with_amount,
 )
+from services.deal import notify_status
+from services.explain import FAILED_EXPLANATION, build_explanation
 from services.scoring import decision_to_status
 from services.ws_manager import ws_manager
 
@@ -275,16 +277,8 @@ class ApplicationService:
             # Заявка уже сохранена: номер нужен фронту, чтобы показать её, а не просить подать заново
             exc.application_id = application.application_id
             await ApplicationRepository.mark_failed(application.application_id, str(exc))
-            await ws_manager.broadcast(
-                application.user_id,
-                {
-                    "type": "status_changed",
-                    "application_id": application.application_id,
-                    "status": "failed",
-                    "payload": {"error": str(exc)},
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                },
-            )
+            application.status = "failed"
+            await notify_status(application, explanation=FAILED_EXPLANATION)
             raise
 
         response = proto_to_schema_response(proto_response)
@@ -296,6 +290,11 @@ class ApplicationService:
         status = decision_to_status(decision_value, client_chose_product)
         if status != "different":
             outcome = None
+        if explanation is None:
+            explanation = build_explanation(
+                status, outcome, response.decision.model_dump() if response.decision else None, offer,
+                application.requested_amount_rub, bool(application.product_selected_by_system),
+            )
 
         updated = await ApplicationRepository.update_scoring(
             application_id=application.application_id,
@@ -306,22 +305,7 @@ class ApplicationService:
             offer=offer,
         )
 
-        await ws_manager.broadcast(
-            application.user_id,
-            {
-                "type": "status_changed",
-                "application_id": application.application_id,
-                "status": status,
-                "payload": {
-                    "score": response.score,
-                    "risk_grade": response.risk_grade,
-                    "decision": decision_value,
-                    "reason_codes": [rc.model_dump() for rc in response.reason_codes],
-                },
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            },
-        )
-
+        await notify_status(updated or application)
         return updated or application
 
     @classmethod

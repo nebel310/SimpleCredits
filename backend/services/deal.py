@@ -7,11 +7,8 @@ from datetime import datetime, timezone
 
 from models.applications import ApplicationOrm
 from repositories.applications import ApplicationRepository
+from schemas.applications import ACCEPTABLE_OUTCOMES, available_actions  # noqa: F401
 from services.ws_manager import ws_manager
-
-
-# Что можно принять: одобрение и предложения банка. Ручная проверка — не оффер.
-ACCEPTABLE_OUTCOMES = ("ALTERNATIVE_PRODUCT", "COUNTER_OFFER")
 
 WHY_NOT = {
     "pending": "Заявка ещё обрабатывается",
@@ -32,11 +29,7 @@ class DealError(Exception):
 
 
 def _has_offer_to_accept(application: ApplicationOrm) -> bool:
-    if not application.offer:
-        return False
-    if application.status == "confirmed":
-        return True
-    return application.status == "different" and application.outcome in ACCEPTABLE_OUTCOMES
+    return "accept" in available_actions(application.status, application.outcome, bool(application.offer))
 
 
 def _why_not(application: ApplicationOrm) -> str:
@@ -45,17 +38,30 @@ def _why_not(application: ApplicationOrm) -> str:
     return WHY_NOT.get(application.status, "Действие недоступно для этой заявки")
 
 
-async def _notify(application: ApplicationOrm) -> None:
+async def notify_status(application: ApplicationOrm, explanation: str | None = None) -> None:
+    """
+    WebSocket клиенту о смене статуса. Только то, что клиенту можно: статус, тип результата,
+    объяснение и доступные действия. Балл, PD, грейд и факторы модели по WebSocket не уходят.
+    """
     await ws_manager.broadcast(
         application.user_id,
         {
             "type": "status_changed",
             "application_id": application.application_id,
             "status": application.status,
-            "payload": {"outcome": application.outcome},
+            "payload": {
+                "outcome": getattr(application, "outcome", None),
+                "explanation": explanation if explanation is not None else getattr(application, "explanation", None),
+                "actions": available_actions(
+                    application.status, getattr(application, "outcome", None), bool(getattr(application, "offer", None))
+                ),
+            },
             "created_at": datetime.now(timezone.utc).isoformat(),
         },
     )
+
+
+_notify = notify_status
 
 
 async def accept_offer(application: ApplicationOrm) -> ApplicationOrm:
