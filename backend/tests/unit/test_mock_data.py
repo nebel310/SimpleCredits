@@ -61,7 +61,7 @@ def test_egrul_fields():
     assert e.inn == "7701234567"
     assert len(e.ogrn) == 13
     assert e.ogrn.isdigit()
-    assert e.legal_form in ("llc", "individual_entrepreneur", "joint_stock_company")
+    assert e.legal_form in ("llc", "joint_stock_company")
     assert e.employee_count >= 1
     assert e.status == "active"
 
@@ -130,3 +130,34 @@ def test_bki_no_active_no_payments():
     b = generate_bki("7701234567", now=FIXED_NOW)
     if b.active_obligations_count == 0:
         assert b.monthly_debt_payments_rub == 0
+
+
+def test_egrul_form_matches_inn_length():
+    """12 цифр ИНН — ИП с ОГРНИП из 15 цифр, 10 цифр — ООО/АО с ОГРН из 13 цифр"""
+    for inn in ("500100732259", "771234567890", "502345678901"):
+        e = generate_egrul(inn)
+        assert e.legal_form == "individual_entrepreneur" and len(e.ogrn) == 15 and e.ogrn[0] == "3"
+        assert e.legal_name.startswith("ИП ") and e.employee_count <= 15
+    for inn in ("7707083893", "7712345678", "7723456789"):
+        e = generate_egrul(inn)
+        assert e.legal_form in ("llc", "joint_stock_company") and len(e.ogrn) == 13 and e.ogrn[0] == "1"
+
+
+def test_fns_patent_only_for_ip():
+    for i in range(300):
+        inn10, inn12 = f"77{i:08d}", f"77{i:010d}"
+        assert generate_fns(inn10).tax_regime in ("УСН", "ОСН")
+        assert generate_fns(inn12).tax_regime in ("УСН", "ПАТЕНТ", "ОСН")
+
+
+def test_bki_internally_consistent():
+    """Нет кредитов — нет долга, платежей и загрузки; платёж соразмерен остатку; текущая просрочка видна в истории"""
+    for i in range(500):
+        b = generate_bki(f"77{i:08d}")
+        if b.active_obligations_count == 0:
+            assert b.total_outstanding_rub == 0 and b.monthly_debt_payments_rub == 0 and b.credit_utilization == 0
+            assert not b.has_current_past_due
+        else:
+            assert 0.03 * b.total_outstanding_rub - 1 <= b.monthly_debt_payments_rub <= 0.08 * b.total_outstanding_rub + 1
+        if b.has_current_past_due:
+            assert b.max_days_past_due_12m >= 1
