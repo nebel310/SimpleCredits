@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, JSON, Text
+from sqlalchemy import DateTime, ForeignKey, Index, JSON, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Model
@@ -9,6 +9,8 @@ from database import Model
 class ApplicationOrm(Model):
     """Модель кредитной заявки со снимком профиля и результатом скоринга"""
     __tablename__ = "applications"
+    # Один ключ идемпотентности — одна заявка у пользователя (двойной клик, повтор запроса сетью)
+    __table_args__ = (Index("ux_applications_user_idempotency", "user_id", "idempotency_key", unique=True),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     application_id: Mapped[str] = mapped_column(unique=True, nullable=False, index=True)
@@ -28,6 +30,8 @@ class ApplicationOrm(Model):
     issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Решение сотрудника банка по ручной проверке: decision, comment, decided_at, decided_by
     bank_decision: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Заголовок Idempotency-Key из POST /applications
+    idempotency_key: Mapped[str | None] = mapped_column(nullable=True)
     requested_amount_rub: Mapped[int] = mapped_column(nullable=False)
     term_months: Mapped[int] = mapped_column(nullable=False)
     purpose: Mapped[str] = mapped_column(nullable=False)

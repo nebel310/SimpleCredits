@@ -57,3 +57,22 @@ async def test_add_missing_columns_refuses_not_null(monkeypatch):
         async with engine.begin() as conn:
             await conn.run_sync(add_missing_columns)
     await engine.dispose()
+
+
+async def test_add_missing_columns_creates_missing_indexes(monkeypatch):
+    """Индекс из модели появляется и в старой таблице"""
+    from sqlalchemy import Index
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
+    old = MetaData()
+    Table("demo_items", old, Column("id", Integer, primary_key=True), Column("owner", Integer))
+    new = MetaData()
+    t = Table("demo_items", new, Column("id", Integer, primary_key=True), Column("owner", Integer), Column("key", String, nullable=True))
+    Index("ux_demo_owner_key", t.c.owner, t.c.key, unique=True)
+    async with engine.begin() as conn:
+        await conn.run_sync(old.create_all)
+    monkeypatch.setattr(Model, "metadata", new)
+    async with engine.begin() as conn:
+        added = await conn.run_sync(add_missing_columns)
+        indexes = await conn.run_sync(lambda c: {i["name"] for i in inspect(c).get_indexes("demo_items")})
+    assert "demo_items.ux_demo_owner_key" in added and "ux_demo_owner_key" in indexes
+    await engine.dispose()

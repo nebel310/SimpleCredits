@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 
 from ml_grpc.client import ScoringClient
 from ml_grpc.exceptions import (
@@ -19,7 +20,7 @@ from schemas.applications import (
 from schemas.base import ErrorResponse, ValidationErrorResponse
 from services import deal
 from services.application import ApplicationService
-from services.exceptions import ProductMismatchError, ProfileIncompleteError
+from services.exceptions import ProductMismatchError, ProfileIncompleteError, RetryNotAllowedError
 from utils.pagination import decode_cursor, encode_cursor
 from utils.security import get_current_user
 
@@ -32,15 +33,30 @@ def get_scoring_client(request: Request) -> ScoringClient:
     return request.app.state.scoring_client
 
 
+def _grpc_status_code(exc: GrpcServiceError) -> int:
+    """HTTP-статус для доменной gRPC-ошибки"""
+    if isinstance(exc, GrpcInvalidArgumentError):
+        return 400
+    if isinstance(exc, GrpcDeadlineExceededError):
+        return 504
+    return 502
+
+
 def _grpc_http_exception(exc: GrpcServiceError) -> HTTPException:
     """Конвертирует доменную gRPC-ошибку в HTTPException с нужным статусом"""
-    if isinstance(exc, GrpcUnavailableError):
-        return HTTPException(status_code=502, detail=str(exc))
-    if isinstance(exc, GrpcInvalidArgumentError):
-        return HTTPException(status_code=400, detail=str(exc))
-    if isinstance(exc, GrpcDeadlineExceededError):
-        return HTTPException(status_code=504, detail=str(exc))
-    return HTTPException(status_code=502, detail=str(exc))
+    return HTTPException(status_code=_grpc_status_code(exc), detail=str(exc))
+
+
+def _grpc_error_response(exc: GrpcServiceError) -> JSONResponse:
+    """
+    Ошибка ML после того, как заявка уже сохранена: тот же статус (502/504/400) и detail,
+    плюс application_id — фронт показывает сохранённую заявку с кнопкой «Повторить проверку»,
+    а не просит подать заявку заново.
+    """
+    return JSONResponse(
+        status_code=_grpc_status_code(exc),
+        content={"detail": str(exc), "application_id": getattr(exc, "application_id", None)},
+    )
 
 
 @router.post(
@@ -59,18 +75,24 @@ async def create_application(
     data: SApplicationCreateRequest,
     current_user: UserOrm = Depends(get_current_user),
     client: ScoringClient = Depends(get_scoring_client),
+    idempotency_key: str | None = Header(
+        None,
+        alias="Idempotency-Key",
+        max_length=128,
+        description="Уникальный ключ попытки: повтор с тем же ключом вернёт ту же заявку, а не создаст новую",
+    ),
 ):
     """Создаёт кредитную заявку, обогащает, скорит и возвращает детали"""
     try:
         application = await ApplicationService.create_and_process(
-            current_user, data, client
+            current_user, data, client, idempotency_key=idempotency_key
         )
     except ProfileIncompleteError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except ProductMismatchError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except GrpcServiceError as exc:
-        raise _grpc_http_exception(exc) from exc
+        return _grpc_error_response(exc)
 
     return application_orm_to_schema(application)
 
@@ -209,3 +231,23 @@ async def reject_application_offer(application_id: str, current_user: UserOrm = 
         return application_orm_to_schema(await deal.reject_offer(application))
     except deal.DealError as exc:
         raise HTTPException(status_code=409, detail=exc.message)
+
+
+@router.post(
+    "/{application_id}/retry",
+    response_model=SApplicationDetail,
+    responses={**DEAL_RESPONSES, 502: {"model": ErrorResponse}, 504: {"model": ErrorResponse}},
+)
+async def retry_application(
+    application_id: str,
+    current_user: UserOrm = Depends(get_current_user),
+    client: ScoringClient = Depends(get_scoring_client),
+):
+    """Повторить проверку после технической ошибки (статус failed). Новая заявка не создаётся"""
+    application = await _own_application(application_id, current_user)
+    try:
+        return application_orm_to_schema(await ApplicationService.retry(application, client))
+    except RetryNotAllowedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except GrpcServiceError as exc:
+        return _grpc_error_response(exc)

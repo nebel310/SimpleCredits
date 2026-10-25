@@ -1,4 +1,7 @@
+import asyncio
 from datetime import datetime, timezone
+
+from sqlalchemy.exc import IntegrityError
 
 from ml_grpc.client import ScoringClient
 from ml_grpc.exceptions import GrpcServiceError
@@ -18,7 +21,7 @@ from schemas.applications import (
 )
 from schemas.auth import _build_company, _build_credit_history, _build_financials
 from services.enrichment import _credit_history_from_bki, enrich
-from services.exceptions import ProductMismatchError, ProfileIncompleteError
+from services.exceptions import ProductMismatchError, ProfileIncompleteError, RetryNotAllowedError
 from services.products import (
     Applicant,
     build_offer,
@@ -34,6 +37,8 @@ from services.ws_manager import ws_manager
 
 
 NO_SUITABLE_PRODUCT = "NO_SUITABLE_PRODUCT"
+# Проверка «есть ли заявка с этим ключом» и создание — атомарно в пределах процесса
+_IDEMPOTENCY_LOCK = asyncio.Lock()
 RECOMMENDED_AMOUNT_OUTSIDE_PRODUCTS = "RECOMMENDED_AMOUNT_OUTSIDE_PRODUCTS"
 
 
@@ -108,8 +113,33 @@ class ApplicationService:
         user: UserOrm,
         create_request: SApplicationCreateRequest,
         client: ScoringClient,
+        idempotency_key: str | None = None,
     ) -> ApplicationOrm:
-        """Проверяет и создаёт заявку, затем обрабатывает её (обогащение, скоринг, решение)"""
+        """
+        Проверяет и создаёт заявку, затем обрабатывает её (обогащение, скоринг, решение).
+        С тем же Idempotency-Key повторный запрос возвращает уже созданную заявку:
+        проверка и создание идут под замком, поэтому двойной клик не создаст две заявки.
+        """
+        if idempotency_key:
+            async with _IDEMPOTENCY_LOCK:
+                existing = await ApplicationRepository.get_by_idempotency_key(user.id, idempotency_key)
+                if existing is not None:
+                    return existing
+                application, created = await cls._create(user, create_request, idempotency_key)
+        else:
+            application, created = await cls._create(user, create_request, None)
+        if not created:
+            return application
+        return await cls.process(application, client)
+
+    @classmethod
+    async def _create(
+        cls,
+        user: UserOrm,
+        create_request: SApplicationCreateRequest,
+        idempotency_key: str | None,
+    ) -> tuple[ApplicationOrm, bool]:
+        """Проверяет профиль и продукт, сохраняет заявку со снимком. Возвращает (заявка, создана ли новая)"""
         await cls._maybe_update_profile(user, create_request)
 
         refreshed = await UserRepository.get_user_by_id(user.id)
@@ -166,13 +196,41 @@ class ApplicationService:
             financials=financials,
             credit_history=credit_history,
         )
-        application = await ApplicationRepository.create(
-            user_id=refreshed.id,
-            data=snapshot,
-            product_type=chosen.product_type if chosen else None,
-            product_selected_by_system=selected_by_system,
+        try:
+            application = await ApplicationRepository.create(
+                user_id=refreshed.id,
+                data=snapshot,
+                product_type=chosen.product_type if chosen else None,
+                product_selected_by_system=selected_by_system,
+                idempotency_key=idempotency_key,
+            )
+        except IntegrityError:
+            # Запасной случай (несколько процессов бэкенда): второй запрос с тем же ключом
+            # упирается в уникальный индекс — отдаём уже созданную заявку
+            existing = await ApplicationRepository.get_by_idempotency_key(refreshed.id, idempotency_key or "")
+            if existing is None:
+                raise
+            return existing, False
+        return application, True
+
+    @classmethod
+    async def retry(cls, application: ApplicationOrm, client: ScoringClient) -> ApplicationOrm:
+        """
+        Повторяет проверку заявки после технической ошибки (failed): та же заявка,
+        новая попытка обогащения и скоринга. Два повтора одновременно не запустятся:
+        перевод failed → pending делается одним UPDATE.
+        """
+        if application.status != "failed":
+            raise RetryNotAllowedError("Повторить можно только проверку, которая завершилась ошибкой")
+        restarted = await ApplicationRepository.transition(
+            application.application_id,
+            from_statuses=("failed",),
+            to_status="pending",
+            event_type="retry_started",
         )
-        return await cls.process(application, client)
+        if restarted is None:
+            raise RetryNotAllowedError("Проверка уже запущена — обновите страницу")
+        return await cls.process(restarted, client)
 
     @classmethod
     async def process(cls, application: ApplicationOrm, client: ScoringClient) -> ApplicationOrm:
@@ -214,6 +272,8 @@ class ApplicationService:
             proto_request = schema_to_proto_score_request(request_for_ml, application.application_id)
             proto_response = await client.score_application(proto_request)
         except GrpcServiceError as exc:
+            # Заявка уже сохранена: номер нужен фронту, чтобы показать её, а не просить подать заново
+            exc.application_id = application.application_id
             await ApplicationRepository.mark_failed(application.application_id, str(exc))
             await ws_manager.broadcast(
                 application.user_id,

@@ -49,6 +49,12 @@ def add_missing_columns(sync_conn) -> list[str]:
                 f"ALTER TABLE {quote(table.name)} ADD COLUMN {quote(column.name)} {column_type}"
             )
             added.append(f"{table.name}.{column.name}")
+        # Индексы, объявленные в моделях позже (create_all их тоже не добавит в старую таблицу)
+        have_indexes = {i["name"] for i in insp.get_indexes(table.name)}
+        for index in table.indexes:
+            if index.name and index.name not in have_indexes:
+                index.create(sync_conn, checkfirst=True)
+                added.append(f"{table.name}.{index.name}")
     return added
 
 

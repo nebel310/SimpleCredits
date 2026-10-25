@@ -27,3 +27,7 @@ class ProductMismatchError(Exception):
         self.product_name = product_name
         self.reasons = reasons
         super().__init__(f"Продукт «{product_name}» не подходит: " + "; ".join(reasons))
+
+
+class RetryNotAllowedError(Exception):
+    """Повтор проверки недоступен: заявка не в статусе failed или повтор уже идёт"""

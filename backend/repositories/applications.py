@@ -18,6 +18,7 @@ class ApplicationRepository:
         data: SScoreApplicationRequest,
         product_type: str | None = None,
         product_selected_by_system: bool = False,
+        idempotency_key: str | None = None,
     ) -> ApplicationOrm:
         """Создаёт заявку со снимком профиля и пишет событие created"""
         application_id = uuid.uuid4().hex
@@ -34,6 +35,7 @@ class ApplicationRepository:
                 status="pending",
                 product_type=actual_product_type,
                 product_selected_by_system=product_selected_by_system,
+                idempotency_key=idempotency_key,
                 requested_amount_rub=data.application.requested_amount_rub,
                 term_months=data.application.term_months,
                 purpose=data.application.purpose,
@@ -174,6 +176,15 @@ class ApplicationRepository:
             )
             await session.commit()
         return await cls.get_by_application_id(application_id)
+
+    @classmethod
+    async def get_by_idempotency_key(cls, user_id: int, key: str) -> ApplicationOrm | None:
+        """Заявка пользователя, созданная с этим ключом идемпотентности"""
+        async with new_session() as session:
+            query = select(ApplicationOrm).where(
+                ApplicationOrm.user_id == user_id, ApplicationOrm.idempotency_key == key
+            )
+            return (await session.execute(query)).scalars().first()
 
     @classmethod
     async def save_credit_history(cls, application_id: str, credit_history: SCreditHistory) -> ApplicationOrm | None:

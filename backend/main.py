@@ -101,6 +101,7 @@ def custom_openapi():
         ("/applications/{application_id}/accept", "post"): [{"Bearer": []}],
         ("/applications/{application_id}/issue", "post"): [{"Bearer": []}],
         ("/applications/{application_id}/reject", "post"): [{"Bearer": []}],
+        ("/applications/{application_id}/retry", "post"): [{"Bearer": []}],
         ("/scoring/batch", "post"): [{"Bearer": []}],
         ("/scoring/model-info", "get"): [{"Bearer": []}],
         ("/admin/applications", "get"): [{"Bearer": []}],
