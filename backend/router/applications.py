@@ -18,7 +18,7 @@ from schemas.applications import (
 )
 from schemas.base import ErrorResponse, ValidationErrorResponse
 from services.application import ApplicationService
-from services.exceptions import ProfileIncompleteError
+from services.exceptions import ProductMismatchError, ProfileIncompleteError
 from utils.pagination import decode_cursor, encode_cursor
 from utils.security import get_current_user
 
@@ -48,8 +48,8 @@ def _grpc_http_exception(exc: GrpcServiceError) -> HTTPException:
     status_code=status.HTTP_201_CREATED,
     responses={
         400: {"model": ValidationErrorResponse, "description": "Профиль не заполнен / ML отклонил"},
+        422: {"description": "Тело не прошло валидацию или выбранный продукт не подходит под заявку"},
         401: {"model": ErrorResponse, "description": "Не авторизован"},
-        422: {"description": "Тело не прошло валидацию Pydantic"},
         502: {"model": ErrorResponse, "description": "ML недоступен"},
         504: {"model": ErrorResponse, "description": "Таймаут ML"},
     },
@@ -66,6 +66,8 @@ async def create_application(
         )
     except ProfileIncompleteError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    except ProductMismatchError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     except GrpcServiceError as exc:
         raise _grpc_http_exception(exc) from exc
 

@@ -15,7 +15,9 @@ from schemas.applications import (
 )
 from schemas.auth import _build_company, _build_credit_history, _build_financials
 from services.enrichment import enrich
-from services.exceptions import ProfileIncompleteError
+from repositories.products import ProductRepository
+from services.exceptions import ProductMismatchError, ProfileIncompleteError
+from services.products import Applicant, company_age_months, derive_segment, mismatch_reasons
 from services.scoring import decision_to_status
 from services.ws_manager import ws_manager
 
@@ -47,12 +49,32 @@ class ApplicationService:
                 "или передайте данные company, financials, credit_history в теле заявки"
             )
 
+        # Сегмент определяет банк по числу сотрудников и выручке, а не клиент
+        segment = derive_segment(company.employee_count, financials.annual_revenue_rub)
+        applicant = Applicant(
+            segment=segment,
+            purpose=create_request.purpose,
+            amount_rub=create_request.requested_amount_rub,
+            term_months=create_request.term_months,
+            legal_form=company.legal_form,
+            age_months=company_age_months(company.registration_date),
+        )
+        products = await ProductRepository.list_active()
+
+        if create_request.product_type is not None:
+            chosen = next((p for p in products if p.product_type == create_request.product_type), None)
+            if chosen is None:
+                raise ProductMismatchError(create_request.product_type, ["продукт недоступен"])
+            reasons = mismatch_reasons(chosen, applicant)
+            if reasons:
+                raise ProductMismatchError(chosen.name, reasons)
+
         application_schema = SApplication(
             product_type=create_request.product_type or DEFAULT_PRODUCT_TYPE,
             requested_amount_rub=create_request.requested_amount_rub,
             term_months=create_request.term_months,
             purpose=create_request.purpose,
-            segment=create_request.segment,
+            segment=segment,
             submitted_at=datetime.now(timezone.utc),
         )
 

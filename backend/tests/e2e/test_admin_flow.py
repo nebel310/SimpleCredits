@@ -70,7 +70,7 @@ async def test_admin_login_and_list(e2e_client):
             "product_type": "term_loan",
             "requested_amount_rub": 1500000,
             "term_months": 24,
-            "purpose": "equipment",
+            "purpose": "working_capital",
             "segment": "small",
         },
         headers=user_headers,

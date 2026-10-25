@@ -50,7 +50,7 @@ def make_body(product_type="term_loan"):
     body = {
         "requested_amount_rub": 1500000,
         "term_months": 24,
-        "purpose": "equipment",
+        "purpose": "working_capital",
         "segment": "small",
     }
     if product_type is not None:

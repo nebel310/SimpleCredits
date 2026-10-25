@@ -65,6 +65,8 @@ async def fake_grpc_server():
 
 @pytest_asyncio.fixture
 async def scoring_client(fake_grpc_server):
+    from repositories.products import ProductRepository
+    await ProductRepository.ensure_products()
     _, port, _ = fake_grpc_server
     client = ScoringClient(host="127.0.0.1", port=port, timeout=5.0)
     await client.start()
@@ -143,7 +145,7 @@ def make_body(product_type: str | None = "term_loan"):
     body = {
         "requested_amount_rub": 1500000,
         "term_months": 24,
-        "purpose": "equipment",
+        "purpose": "working_capital",
         "segment": "small",
     }
     if product_type is not None:
