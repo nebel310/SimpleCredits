@@ -48,6 +48,14 @@ def create_access_token(data: dict) -> str:
 
 
 
+async def is_token_blacklisted(token: str) -> bool:
+    """Проверяет, отозван ли токен (выход из аккаунта). Используется в HTTP и WebSocket"""
+    async with new_session() as session:
+        query = select(BlacklistedTokenOrm).where(BlacklistedTokenOrm.token == token)
+        result = await session.execute(query)
+        return result.scalars().first() is not None
+
+
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserOrm:
     """Получает текущего пользователя на основе JWT токена."""
     credentials_exception = HTTPException(
@@ -63,12 +71,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserOrm:
         await session.execute(query)
         await session.commit()
     
-    async with new_session() as session:
-        query = select(BlacklistedTokenOrm).where(BlacklistedTokenOrm.token == token)
-        result = await session.execute(query)
-        
-        if result.scalars().first():
-            raise credentials_exception
+    if await is_token_blacklisted(token):
+        raise credentials_exception
     
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])

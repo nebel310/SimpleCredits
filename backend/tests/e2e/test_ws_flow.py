@@ -202,3 +202,18 @@ async def test_ws_reconnect_restores_events(real_server):
         assert "enriched" in types
         assert "scored" in types
         assert "status_changed" in types
+
+async def test_ws_rejects_token_after_logout(real_server):
+    """После выхода из аккаунта канал по старому токену не открывается (4401), как и HTTP"""
+    base_url, _ = real_server
+    async with httpx.AsyncClient(base_url=base_url) as client:
+        token = await _setup_user(client, "ws-logout@example.com")
+        headers = {"Authorization": f"Bearer {token}"}
+        assert (await client.post("/auth/logout", headers=headers)).status_code == 200
+        assert (await client.get("/auth/me", headers=headers)).status_code == 401
+
+    ws_url = base_url.replace("http://", "ws://") + f"/ws/applications?token={token}"
+    with pytest.raises(websockets.ConnectionClosed) as exc:
+        async with websockets.connect(ws_url) as ws:
+            await ws.recv()
+    assert exc.value.code == 4401

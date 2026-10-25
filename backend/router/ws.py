@@ -3,7 +3,7 @@ from jose import JWTError, jwt
 from starlette.websockets import WebSocketState
 
 from repositories.auth import UserRepository
-from utils.security import ALGORITHM, SECRET_KEY
+from utils.security import ALGORITHM, SECRET_KEY, is_token_blacklisted
 from services.ws_manager import ws_manager
 
 
@@ -19,6 +19,12 @@ async def ws_applications(websocket: WebSocket, token: str = Query(...)):
         if not email:
             raise JWTError("no sub")
     except JWTError:
+        await websocket.accept()
+        await websocket.close(code=4401)
+        return
+
+    # Токен после выхода из аккаунта отозван — канал по нему открывать нельзя, как и HTTP
+    if await is_token_blacklisted(token):
         await websocket.accept()
         await websocket.close(code=4401)
         return
