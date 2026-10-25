@@ -43,7 +43,7 @@ async def _register_and_login(client, email, password="secret123"):
     await client.post(
         "/auth/register",
         json={
-            "username": "user",
+            "username": email,
             "email": email,
             "password": password,
             "password_confirm": password,

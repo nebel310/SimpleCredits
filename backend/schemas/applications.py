@@ -1,7 +1,7 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 ProductType = Literal["microloan", "term_loan", "overdraft", "credit_line", "leasing"]
@@ -14,6 +14,18 @@ ReasonImpact = Literal["positive", "negative", "neutral"]
 ApplicationStatus = Literal["pending", "failed", "confirmed", "different", "declined"]
 
 DEFAULT_PRODUCT_TYPE: ProductType = "term_loan"
+
+
+def ensure_not_future(value: datetime | None, what: str) -> None:
+    """
+    Дата из анкеты не может быть в будущем. Сутки запаса — из-за часовых поясов:
+    клиент в Москве после полуночи уже живёт «завтрашней» датой по UTC.
+    """
+    if value is None:
+        return
+    moment = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if moment > datetime.now(timezone.utc) + timedelta(days=1):
+        raise ValueError(f"{what} не может быть в будущем")
 
 
 class SApplication(BaseModel):
@@ -128,13 +140,22 @@ class SModelInfoResponse(BaseModel):
 class SApplicationCreateRequest(BaseModel):
     """Тело запроса на создание кредитной заявки"""
     product_type: ProductType | None = None
-    requested_amount_rub: int = Field(..., ge=0)
+    requested_amount_rub: int = Field(..., gt=0)
     term_months: int = Field(..., ge=1)
     purpose: FinancingPurpose
     segment: BusinessSegment
     company: SCompany | None = None
     financials: SFinancials | None = None
     credit_history: SCreditHistory | None = None
+
+    @model_validator(mode="after")
+    def check_dates(self):
+        """Даты компании и отчётности не из будущего"""
+        if self.company is not None:
+            ensure_not_future(self.company.registration_date, "Дата регистрации компании")
+        if self.financials is not None:
+            ensure_not_future(self.financials.period_end, "Отчётный период")
+        return self
 
 
 class SApplicationEventResponse(BaseModel):

@@ -63,7 +63,7 @@ async def _setup_user(client: httpx.AsyncClient, email: str) -> str:
     await client.post(
         "/auth/register",
         json={
-            "username": "user",
+            "username": email,
             "email": email,
             "password": "secret123",
             "password_confirm": "secret123",

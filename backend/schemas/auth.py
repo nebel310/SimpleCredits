@@ -2,15 +2,22 @@ from datetime import datetime, date
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 from typing import Literal
 
-from schemas.applications import SCompany, SFinancials, SCreditHistory
+from schemas.applications import SCompany, SFinancials, SCreditHistory, ensure_not_future
 
 
 class SUserRegister(BaseModel):
     """Схема для регистрации нового пользователя"""
-    username: str
+    username: str = Field(..., min_length=1, max_length=50)
     email: EmailStr
-    password: str
+    password: str = Field(..., min_length=6, max_length=128)
     password_confirm: str
+
+    @model_validator(mode="after")
+    def check_passwords_match(self):
+        """Пароль и подтверждение должны совпадать"""
+        if self.password != self.password_confirm:
+            raise ValueError("Пароли не совпадают")
+        return self
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -55,6 +62,15 @@ class SUserUpdate(BaseModel):
         """Запрещает пустой апдейт"""
         if all(v is None for v in self.__dict__.values()):
             raise ValueError("Не передано ни одного поля для обновления")
+        return self
+
+    @model_validator(mode="after")
+    def check_dates(self):
+        """Дата регистрации компании и отчётный период не из будущего"""
+        if self.company is not None:
+            ensure_not_future(self.company.registration_date, "Дата регистрации компании")
+        if self.financials is not None:
+            ensure_not_future(self.financials.period_end, "Отчётный период")
         return self
 
 

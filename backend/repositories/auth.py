@@ -39,6 +39,10 @@ class UserRepository:
             if result.scalars().first():
                 raise ValueError("Пользователь с таким email уже существует")
 
+            same_name = await session.execute(select(UserOrm).where(UserOrm.username == user_data.username))
+            if same_name.scalars().first():
+                raise ValueError("Пользователь с таким именем уже существует")
+
             hashed_password = pwd_context.hash(user_data.password)
 
             user = UserOrm(
@@ -195,6 +199,15 @@ class UserRepository:
                             pass
 
                 user.avatar_id = new_avatar_id
+
+            if "username" in update_data:
+                taken = await session.execute(
+                    select(UserOrm).where(
+                        UserOrm.username == update_data["username"], UserOrm.id != user_id
+                    )
+                )
+                if taken.scalars().first():
+                    raise ValueError("Пользователь с таким именем уже существует")
 
             if "email" in update_data:
                 existing = await session.execute(
