@@ -98,6 +98,11 @@ class LoginResponse(BaseModel):
     token_type: str = Field(..., example="bearer")
 
 
+class SRefreshRequest(BaseModel):
+    """Тело запроса на продление сессии"""
+    refresh_token: str
+
+
 class RefreshResponse(BaseModel):
     """Схема ответа для обновления токена"""
     access_token: str = Field(..., example="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...")

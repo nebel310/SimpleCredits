@@ -1,11 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from models.auth import UserOrm
 from repositories.auth import UserRepository
 from schemas.base import ValidationErrorResponse, ErrorResponse
 from schemas.auth import (
     LoginResponse, LogoutResponse, SUserRegister,
-    RefreshResponse, RegisterResponse, SUser,
+    RefreshResponse, RegisterResponse, SUser, SRefreshRequest,
     SUserLogin, SUserUpdate, SUserListResponse,
     user_orm_to_schema
 )
@@ -109,13 +109,19 @@ async def login_user(login_data: SUserLogin):
         500: {"model": ErrorResponse}
     }
 )
-async def refresh_token(refresh_token: str):
+async def refresh_token(
+    refresh_token: str | None = Query(None, description="Устаревший способ: токен в адресе"),
+    body: SRefreshRequest | None = Body(None),
+):
     """
     Обновление access токена с помощью refresh токена.
-    
-    Refresh токен должен быть валидным и не истекшим.
+    Токен лучше передавать в теле {"refresh_token": "..."}: адрес попадает в логи.
+    Передача в query оставлена для совместимости.
     Возвращает новый access токен.
     """
+    refresh_token = body.refresh_token if body is not None else refresh_token
+    if not refresh_token:
+        raise HTTPException(status_code=400, detail="Не передан refresh токен")
     try:
         user = await UserRepository.get_user_by_refresh_token(refresh_token)
         
