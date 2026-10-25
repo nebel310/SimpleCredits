@@ -7,7 +7,11 @@ export type Segment = 'micro' | 'small';
 export type LegalForm = 'llc' | 'individual_entrepreneur' | 'joint_stock_company';
 export type RiskGrade = 'A' | 'B' | 'C' | 'D' | 'E';
 export type Decision = 'approve' | 'approve_with_conditions' | 'manual_review' | 'decline';
-export type AppStatus = 'pending' | 'failed' | 'confirmed' | 'different' | 'declined';
+export type AppStatus = 'pending' | 'failed' | 'confirmed' | 'different' | 'declined' | 'accepted' | 'issued' | 'rejected_by_client';
+/** Уточнение статуса different: что предлагает банк */
+export type Outcome = 'ALTERNATIVE_PRODUCT' | 'COUNTER_OFFER' | 'MANUAL_REVIEW';
+/** Что клиент может сделать с заявкой сейчас — присылает бэкенд */
+export type AppAction = 'accept' | 'reject' | 'issue' | 'retry';
 
 export interface Company {
   inn: string;
@@ -93,6 +97,29 @@ export interface DecisionCondition {
   code: string;
   description: string;
   recommended_amount_rub: number;
+  /** Если на рекомендованную сумму банк предлагает другой продукт */
+  recommended_product_type?: ProductType | null;
+}
+
+/** Условия предложения: ставка по грейду внутри диапазона продукта, аннуитетный платёж */
+export interface Offer {
+  product_type: ProductType;
+  product_code: string;
+  product_name: string;
+  amount_rub: number;
+  term_months: number;
+  rate_percent: number;
+  monthly_payment_rub: number;
+  total_payment_rub: number;
+  overpayment_rub: number;
+}
+
+export interface BankDecision {
+  decision: 'approve' | 'approve_with_conditions' | 'decline';
+  comment?: string | null;
+  recommended_amount_rub?: number | null;
+  decided_at?: string | null;
+  decided_by?: string | null;
 }
 
 export interface DecisionResult {
@@ -171,6 +198,13 @@ export interface Application {
   scoring_result: ScoringResult | null;
   enriched_data: EnrichedData | null;
   explanation: string | null;
+  product_selected_by_system?: boolean;
+  outcome?: Outcome | null;
+  offer?: Offer | null;
+  contract_number?: string | null;
+  issued_at?: string | null;
+  bank_decision?: BankDecision | null;
+  actions?: AppAction[];
 }
 
 export interface ApplicationList {
@@ -199,7 +233,15 @@ export interface AdminStats {
   by_status: Record<string, number>;
   by_product_type: Record<string, number>;
   by_risk_grade: Record<string, number>;
+  by_outcome?: Record<string, number>;
+  by_decision?: Record<string, number>;
   avg_score: number | null;
+}
+
+export interface BankDecisionInput {
+  decision: BankDecision['decision'];
+  recommended_amount_rub?: number | null;
+  comment?: string | null;
 }
 
 export interface ModelInfo {
@@ -224,6 +266,8 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    /** Тело ответа целиком — например, application_id сохранённой заявки при сбое ML */
+    public data?: Record<string, unknown>,
   ) {
     super(message);
   }

@@ -4,15 +4,15 @@ import { useLiveUpdates } from '../../api/ws';
 import { useQuery } from '../../lib/hooks';
 import { loadProducts, productName } from '../../lib/catalog';
 import { dateTime, short, money } from '../../lib/format';
-import { LEGAL_FORM_NAME, STATUS } from '../../lib/labels';
+import { LEGAL_FORM_NAME, appTitle, display } from '../../lib/labels';
 import { Btn, Chip, EmptyState, ErrorState, Loading, PageTitle, StatusBanner } from '../../ui/kit';
 import { Px } from '../../ui/Px';
 
 const HOW = [
-  ['Профиль компании', 'Реквизиты, финансы и кредитная история — один раз'],
+  ['Профиль компании', 'Реквизиты и финансы — один раз'],
   ['Заявка', 'Сумма, срок, цель и, если хотите, продукт'],
-  ['Проверка', 'Бэкенд запрашивает ЕГРЮЛ, ФНС и БКИ'],
-  ['Решение', 'Скоринговая модель считает балл и решение'],
+  ['Проверка', 'Банк запрашивает ЕГРЮЛ, ФНС и БКИ и оценивает риск'],
+  ['Решение и оформление', 'Принимаете предложение — и кредит оформлен'],
 ];
 
 export function Home() {
@@ -40,7 +40,7 @@ export function Home() {
             </Btn>
           }
         >
-          Реквизиты, финансы и кредитная история нужны один раз — дальше они подставляются во все заявки. Реквизиты и кредитную историю можно подтянуть по ИНН.
+          Реквизиты и финансы нужны один раз — дальше они подставляются во все заявки. Реквизиты подтянем из ЕГРЮЛ по ИНН, кредитную историю банк возьмёт из БКИ.
         </StatusBanner>
       ) : (
         <section className="hero">
@@ -72,17 +72,22 @@ export function Home() {
           {!apps.data && !apps.error && <Loading lines={3} />}
           {apps.data && apps.data.length === 0 && <EmptyState title="Заявок пока нет" text={ready ? 'Подайте первую — решение придёт сразу' : 'Сначала заполните профиль компании'} />}
           {apps.data &&
-            apps.data.slice(0, 3).map((a) => (
-              <Link key={a.application_id} to={`/applications/${a.application_id}`} className="panel row-panel" style={{ textDecoration: 'none', color: 'inherit' }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <b>{productName(products.data, a.application.product_type)}</b>
-                  <div className="small muted">
-                    {money(a.application.requested_amount_rub)} · подана {dateTime(a.created_at)}
+            apps.data.slice(0, 3).map((a) => {
+              const name = productName(products.data, a.application.product_type);
+              const d = display(a, name);
+              return (
+                <Link key={a.application_id} to={`/applications/${a.application_id}`} className="panel row-panel" style={{ textDecoration: 'none', color: 'inherit' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <b>{appTitle(a, name)}</b>
+                    <div className="small muted">
+                      {money(a.application.requested_amount_rub)} · подана {dateTime(a.created_at)}
+                    </div>
+                    {a.actions?.length && d.next ? <div className="xs" style={{ marginTop: 4, fontWeight: 600 }}>{d.next}</div> : null}
                   </div>
-                </div>
-                <Chip kind={STATUS[a.status].kind}>{STATUS[a.status].chip}</Chip>
-              </Link>
-            ))}
+                  <Chip kind={d.kind}>{d.chip}</Chip>
+                </Link>
+              );
+            })}
         </section>
 
         <aside className="side stack">

@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { api, type AppStatus, type ProductType, type RiskGrade } from '../../api';
+import { api, type Application, type AppStatus, type Outcome, type ProductType, type RiskGrade } from '../../api';
 import { useQuery } from '../../lib/hooks';
 import { loadProducts, productName } from '../../lib/catalog';
 import { dateTime, money, months } from '../../lib/format';
-import { GRADE_KIND, STATUS } from '../../lib/labels';
+import { GRADE_KIND, OUTCOME_NAME, STATUS, appTitle, display } from '../../lib/labels';
 import { Btn, Chip, EmptyState, ErrorState, Loading, PageTitle } from '../../ui/kit';
 import { ApplicationView } from '../shared/ApplicationView';
 
@@ -38,7 +38,20 @@ function Bars({ data, label, kind }: { data: Record<string, number>; label: (k: 
   );
 }
 
-const STATUS_COLOR: Record<AppStatus, string> = { confirmed: 'var(--c-high)', different: 'var(--c-attention)', declined: 'var(--c-negative)', failed: 'var(--c-negative-ink)', pending: 'var(--c-mid)' };
+const STATUS_COLOR: Record<AppStatus, string> = {
+  confirmed: 'var(--c-high)',
+  different: 'var(--c-attention)',
+  declined: 'var(--c-negative)',
+  failed: 'var(--c-negative-ink)',
+  pending: 'var(--c-mid)',
+  accepted: 'var(--c-high)',
+  issued: 'var(--c-black)',
+  rejected_by_client: 'var(--c-gray)',
+};
+const OUTCOME_COLOR: Record<Outcome, string> = { ALTERNATIVE_PRODUCT: 'var(--c-high)', COUNTER_OFFER: 'var(--c-attention)', MANUAL_REVIEW: 'var(--c-mid)' };
+
+/** Заявка ждёт решения сотрудника банка */
+const waiting = (a: Application) => a.status === 'different' && a.outcome === 'MANUAL_REVIEW';
 
 export function Admin() {
   const nav = useNavigate();
@@ -47,6 +60,7 @@ export function Admin() {
   const model = useQuery(() => api.modelInfo(), []);
   const all = useQuery(() => api.allAdminApplications(), []);
   const [shown, setShown] = useState(20);
+  const [onlyWaiting, setOnlyWaiting] = useState(false);
   const refresh = () => {
     stats.reload(true);
     all.reload(true);
@@ -58,9 +72,12 @@ export function Admin() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const items = (all.data ?? []).slice(0, shown);
+  const list = (all.data ?? []).filter((a) => !onlyWaiting || waiting(a));
+  const items = list.slice(0, shown);
   const s = stats.data;
   const by = (st: AppStatus) => s?.by_status[st] ?? 0;
+  const waitingCount = s?.by_outcome?.MANUAL_REVIEW ?? 0;
+  const productLabel = (k: string) => (k === 'unknown' ? 'Продукт не подобран' : productName(products.data, k as ProductType) ?? k);
 
   return (
     <>
@@ -88,7 +105,13 @@ export function Admin() {
               {s.avg_score === null ? '—' : Math.round(s.avg_score)}
             </b>
           </div>
-          {(['confirmed', 'different', 'declined', 'failed'] as AppStatus[]).map((st) => (
+          <button type="button" className="kpi card tight kpi-btn" aria-pressed={onlyWaiting} onClick={() => setOnlyWaiting((v) => !v)} title="Показать только заявки на ручной проверке">
+            <span className="small muted">Ждут проверки</span>
+            <b className="num" style={{ fontSize: 34, color: waitingCount ? 'var(--c-mid-ink)' : undefined }}>
+              {waitingCount}
+            </b>
+          </button>
+          {(['confirmed', 'issued', 'declined', 'failed'] as AppStatus[]).map((st) => (
             <div key={st} className="kpi card tight">
               <span className="small muted">{STATUS[st].chip}</span>
               <b className="num" style={{ fontSize: 34 }}>
@@ -102,10 +125,16 @@ export function Admin() {
         <section className="card">
           <h2 className="h3">По статусам</h2>
           {s ? <Bars data={s.by_status} label={(k) => STATUS[k as AppStatus]?.chip ?? k} kind={(k) => STATUS_COLOR[k as AppStatus] ?? 'var(--c-black)'} /> : <Loading lines={2} />}
+          {s?.by_outcome && Object.keys(s.by_outcome).length > 0 && (
+            <>
+              <h3 className="h3" style={{ marginTop: 8 }}>Тип результата</h3>
+              <Bars data={s.by_outcome} label={(k) => OUTCOME_NAME[k as Outcome] ?? k} kind={(k) => OUTCOME_COLOR[k as Outcome] ?? 'var(--c-black)'} />
+            </>
+          )}
         </section>
         <section className="card">
           <h2 className="h3">По продуктам</h2>
-          {s ? <Bars data={s.by_product_type} label={(k) => productName(products.data, k as ProductType)} /> : <Loading lines={2} />}
+          {s ? <Bars data={s.by_product_type} label={productLabel} /> : <Loading lines={2} />}
         </section>
         <section className="card">
           <h2 className="h3">По грейдам риска</h2>
@@ -115,12 +144,20 @@ export function Admin() {
 
       <section className="card">
         <div className="row-c between">
-          <h2 className="h2">Все заявки</h2>
-          <span className="small muted">Обновляется раз в 15 секунд</span>
+          <h2 className="h2">{onlyWaiting ? 'Ждут проверки' : 'Все заявки'}</h2>
+          <div className="row-c">
+            <Btn view={onlyWaiting ? 'outlined' : 'secondary'} size={32} onClick={() => setOnlyWaiting(false)}>
+              Все
+            </Btn>
+            <Btn view={onlyWaiting ? 'secondary' : 'outlined'} size={32} onClick={() => setOnlyWaiting(true)}>
+              Ждут проверки{waitingCount ? ` · ${waitingCount}` : ''}
+            </Btn>
+            <span className="small muted">Обновляется раз в 15 секунд</span>
+          </div>
         </div>
         {all.error && <ErrorState error={all.error} onRetry={() => all.reload()} />}
         {!all.data && !all.error && <Loading lines={4} />}
-        {all.data && items.length === 0 && <EmptyState title="Заявок пока нет" text="Они появятся, когда клиенты начнут подавать заявки" />}
+        {all.data && items.length === 0 && (onlyWaiting ? <EmptyState title="Проверять нечего" text="Заявок на ручной проверке сейчас нет" /> : <EmptyState title="Заявок пока нет" text="Они появятся, когда клиенты начнут подавать заявки" />)}
         {items.length > 0 && (
           <div className="tbl-wrap">
             <table className="tbl">
@@ -142,7 +179,10 @@ export function Admin() {
                       <b>{a.company.legal_name}</b>
                       <div className="xs muted">ИНН {a.company.inn}</div>
                     </td>
-                    <td>{productName(products.data, a.application.product_type)}</td>
+                    <td>
+                      {appTitle(a, productName(products.data, a.application.product_type))}
+                      {a.product_selected_by_system && <div className="xs muted">подобран банком</div>}
+                    </td>
                     <td className="nowrap">
                       {money(a.application.requested_amount_rub)} · {months(a.application.term_months)}
                     </td>
@@ -156,7 +196,7 @@ export function Admin() {
                       )}
                     </td>
                     <td>
-                      <Chip kind={STATUS[a.status].kind}>{STATUS[a.status].chip}</Chip>
+                      <StatusChip a={a} name={productName(products.data, a.application.product_type)} />
                     </td>
                   </tr>
                 ))}
@@ -164,7 +204,7 @@ export function Admin() {
             </table>
           </div>
         )}
-        {(all.data?.length ?? 0) > shown && (
+        {list.length > shown && (
           <div>
             <Btn view="outlined" size={40} onClick={() => setShown((n) => n + 20)}>
               Показать ещё
@@ -207,6 +247,11 @@ export function Admin() {
       </section>
     </>
   );
+}
+
+function StatusChip({ a, name }: { a: Application; name: string }) {
+  const d = display(a, name);
+  return <Chip kind={d.kind}>{d.chip}</Chip>;
 }
 
 export function AdminApplication() {

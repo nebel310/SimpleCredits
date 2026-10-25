@@ -4,6 +4,7 @@ import type {
   AppEvent,
   Application,
   ApplicationList,
+  BankDecisionInput,
   Bki,
   CreateApplicationInput,
   Egrul,
@@ -49,16 +50,23 @@ export const api = {
   products: () => request<{ products: Product[] }>('GET', '/products', { auth: false }).then((r) => r.products),
 
   // Заявки
-  createApplication: (data: CreateApplicationInput) => request<Application>('POST', '/applications', { body: data }),
+  /** idempotencyKey — один на попытку отправки: двойной клик и повтор сетью не создадут вторую заявку */
+  createApplication: (data: CreateApplicationInput, idempotencyKey?: string) =>
+    request<Application>('POST', '/applications', { body: data, headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined }),
   applications: (cursor?: string | null, limit = 50) => request<ApplicationList>('GET', '/applications', { query: { cursor, limit } }),
   allApplications: () => collect((c) => api.applications(c)),
   application: (id: string) => request<Application>('GET', `/applications/${id}`),
   events: (id: string) => request<AppEvent[]>('GET', `/applications/${id}/events`),
+  accept: (id: string) => request<Application>('POST', `/applications/${id}/accept`),
+  issue: (id: string) => request<Application>('POST', `/applications/${id}/issue`),
+  reject: (id: string) => request<Application>('POST', `/applications/${id}/reject`),
+  retry: (id: string) => request<Application>('POST', `/applications/${id}/retry`),
 
   // Администратор (роль admin)
   adminApplications: (cursor?: string | null, limit = 50) => request<ApplicationList>('GET', '/admin/applications', { query: { cursor, limit } }),
   allAdminApplications: () => collect((c) => api.adminApplications(c)),
   adminStats: () => request<AdminStats>('GET', '/admin/stats/overview'),
+  adminDecision: (id: string, data: BankDecisionInput) => request<Application>('POST', `/admin/applications/${id}/decision`, { body: data }),
   modelInfo: () => request<ModelInfo>('GET', '/scoring/model-info'),
 
   // Мок-госуслуги бэкенда: подставить реквизиты и кредитную историю по ИНН
