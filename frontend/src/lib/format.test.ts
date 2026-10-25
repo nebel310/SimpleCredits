@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { money, months, monthsUpTo, pct, short } from './format';
+import { money, months, monthsUpTo, pct, rate, short } from './format';
 
 const plain = (s: string) => s.replace(/ /g, ' ');
 
@@ -59,5 +59,13 @@ describe('pct', () => {
   it('запятая вместо точки', () => {
     expect(pct(2.83)).toBe('2,8%');
     expect(pct(15, 0)).toBe('15%');
+  });
+});
+
+describe('rate', () => {
+  it('ставка без округления: 17,5% не превращается в 18%', () => {
+    expect(rate(17.5)).toBe('17,5%');
+    expect(rate(18)).toBe('18%');
+    expect(rate(20.8)).toBe('20,8%');
   });
 });

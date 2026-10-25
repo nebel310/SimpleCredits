@@ -1,6 +1,6 @@
 import { useQuery } from '../../lib/hooks';
 import { loadProducts } from '../../lib/catalog';
-import { short, months, pct } from '../../lib/format';
+import { short, months, rate } from '../../lib/format';
 import { PURPOSE_NAME } from '../../lib/labels';
 import { Btn, Chip, ErrorState, Loading, PageTitle } from '../../ui/kit';
 
@@ -39,7 +39,7 @@ export function Products() {
                 <div>
                   <dt>Ставка</dt>
                   <dd>
-                    {pct(p.rate_min_percent, 0)}—{pct(p.rate_max_percent, 0)} годовых
+                    {rate(p.rate_min_percent)}—{rate(p.rate_max_percent)} годовых
                   </dd>
                 </div>
               </dl>
