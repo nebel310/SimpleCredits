@@ -26,6 +26,8 @@ class ApplicationOrm(Model):
     # Оформление: номер модельного договора и момент синтетической выдачи
     contract_number: Mapped[str | None] = mapped_column(nullable=True)
     issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Решение сотрудника банка по ручной проверке: decision, comment, decided_at, decided_by
+    bank_decision: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     requested_amount_rub: Mapped[int] = mapped_column(nullable=False)
     term_months: Mapped[int] = mapped_column(nullable=False)
     purpose: Mapped[str] = mapped_column(nullable=False)

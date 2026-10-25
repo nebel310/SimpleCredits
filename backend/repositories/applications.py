@@ -176,6 +176,34 @@ class ApplicationRepository:
         return await cls.get_by_application_id(application_id)
 
     @classmethod
+    async def backfill_outcomes(cls) -> int:
+        """
+        Заявки «different», созданные до появления поля outcome, получают тип результата
+        по решению модели — чтобы попасть в очередь ручной проверки и в статистику.
+        Трогает только строки, где outcome ещё пустой. Возвращает число обновлённых.
+        """
+        mapping = {
+            "manual_review": "MANUAL_REVIEW",
+            "approve_with_conditions": "COUNTER_OFFER",
+            "approve": "ALTERNATIVE_PRODUCT",
+        }
+        updated = 0
+        async with new_session() as session:
+            rows = (await session.execute(
+                select(ApplicationOrm).where(
+                    ApplicationOrm.status == "different",
+                    ApplicationOrm.outcome.is_(None),
+                )
+            )).scalars().all()
+            for row in rows:
+                decision = ((row.scoring_result or {}).get("decision") or {}).get("decision")
+                if decision in mapping:
+                    row.outcome = mapping[decision]
+                    updated += 1
+            await session.commit()
+        return updated
+
+    @classmethod
     async def mark_failed(cls, application_id: str, reason: str | None = None) -> None:
         """Переводит заявку в статус failed и пишет событие failed"""
         now = datetime.now(timezone.utc)

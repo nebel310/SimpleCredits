@@ -3,7 +3,16 @@ from fastapi import APIRouter, Depends, HTTPException
 from models.auth import UserOrm
 from repositories.admin import AdminRepository
 from schemas.admin import SAdminApplicationListResponse, SAdminStatsResponse
-from schemas.applications import ApplicationOutcome, ApplicationStatus, application_orm_to_schema
+from repositories.applications import ApplicationRepository
+from schemas.applications import (
+    ApplicationOutcome,
+    ApplicationStatus,
+    SApplicationDetail,
+    SBankDecisionRequest,
+    application_orm_to_schema,
+)
+from services import bank
+from services.deal import DealError
 from schemas.base import ErrorResponse, ValidationErrorResponse
 from utils.pagination import decode_cursor, encode_cursor
 from utils.security import require_admin
@@ -75,3 +84,29 @@ async def stats_overview(current_user: UserOrm = Depends(require_admin)):
     """Возвращает агрегированную статистику по заявкам"""
     data = await AdminRepository.stats_overview()
     return SAdminStatsResponse(**data)
+
+
+@router.post(
+    "/applications/{application_id}/decision",
+    response_model=SApplicationDetail,
+    responses={
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse, "description": "Заявка не на ручной проверке или нет подходящего продукта"},
+    },
+)
+async def decide_application(
+    application_id: str,
+    body: SBankDecisionRequest,
+    current_user: UserOrm = Depends(require_admin),
+):
+    """Решение банка по заявке на ручной проверке: одобрить, предложить другую сумму или отказать"""
+    application = await ApplicationRepository.get_by_application_id(application_id)
+    if not application:
+        raise HTTPException(status_code=404, detail="Заявка не найдена")
+    try:
+        updated = await bank.decide_manual_review(application, body, decided_by=current_user.email)
+    except DealError as exc:
+        raise HTTPException(status_code=409, detail=exc.message)
+    return application_orm_to_schema(updated)

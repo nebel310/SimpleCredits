@@ -253,3 +253,28 @@ async def test_cascade_delete_removes_events(test_user):
     async with database.new_session() as session:
         result = await session.execute(select(ApplicationEventOrm))
         assert result.scalars().all() == []
+
+async def test_backfill_outcomes_for_old_different_applications(test_user):
+    """Старые заявки different без outcome получают тип результата по решению модели"""
+    import uuid
+    from datetime import datetime, timezone
+    import database
+    from models.applications import ApplicationOrm
+    from repositories.applications import ApplicationRepository
+
+    now = datetime.now(timezone.utc)
+    common = dict(user_id=test_user.id, product_type="term_loan", requested_amount_rub=100000, term_months=12,
+                  purpose="other", segment="micro", submitted_at=now, inn="7701234567", ogrn="1027700132195",
+                  legal_name="ООО", legal_form="llc", okved="62.01", region="Москва", registration_date=now,
+                  employee_count=1, annual_revenue_rub=1, annual_net_profit_rub=0, ebitda_rub=0, total_debt_rub=0,
+                  monthly_revenue_rub=0, monthly_expenses_rub=0, accounts_receivable_rub=0, cash_balance_rub=0,
+                  period_end=now, active_obligations_count=0, total_outstanding_rub=0, monthly_debt_payments_rub=0,
+                  max_days_past_due_12m=0, has_current_past_due=False, credit_utilization=0.0,
+                  closed_obligations_count=0, applications_last_6m=0)
+    async with database.new_session() as session:
+        for status, decision in [("different", "manual_review"), ("different", "approve_with_conditions"), ("confirmed", "approve")]:
+            session.add(ApplicationOrm(application_id=uuid.uuid4().hex, status=status,
+                                       scoring_result={"decision": {"decision": decision}}, **common))
+        await session.commit()
+    assert await ApplicationRepository.backfill_outcomes() == 2
+    assert await ApplicationRepository.backfill_outcomes() == 0

@@ -180,6 +180,29 @@ class SApplicationCreateRequest(BaseModel):
         return self
 
 
+class SBankDecision(BaseModel):
+    """Решение сотрудника банка по заявке на ручной проверке"""
+    decision: Literal["approve", "approve_with_conditions", "decline"]
+    comment: str | None = None
+    recommended_amount_rub: int | None = None
+    decided_at: datetime | None = None
+    decided_by: str | None = None
+
+
+class SBankDecisionRequest(BaseModel):
+    """Тело POST /admin/applications/{id}/decision"""
+    decision: Literal["approve", "approve_with_conditions", "decline"]
+    recommended_amount_rub: int | None = Field(None, gt=0)
+    comment: str | None = Field(None, max_length=1000)
+
+    @model_validator(mode="after")
+    def check_amount(self):
+        """Для одобрения с условиями нужна сумма"""
+        if self.decision == "approve_with_conditions" and self.recommended_amount_rub is None:
+            raise ValueError("Для одобрения с условиями укажите recommended_amount_rub")
+        return self
+
+
 class SApplicationEventResponse(BaseModel):
     """Событие по заявке для отображения в таймлайне"""
     id: int
@@ -199,6 +222,7 @@ class SApplicationDetail(BaseModel):
     offer: SOffer | None = None
     contract_number: str | None = None
     issued_at: datetime | None = None
+    bank_decision: SBankDecision | None = None
     created_at: datetime
     updated_at: datetime
     application: SApplication
@@ -231,6 +255,7 @@ def application_orm_to_schema(application) -> SApplicationDetail:
         offer=SOffer.model_validate(application.offer) if getattr(application, "offer", None) else None,
         contract_number=getattr(application, "contract_number", None),
         issued_at=getattr(application, "issued_at", None),
+        bank_decision=getattr(application, "bank_decision", None),
         created_at=application.created_at,
         updated_at=application.updated_at,
         application=SApplication(
