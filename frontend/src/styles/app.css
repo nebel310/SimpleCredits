@@ -154,6 +154,8 @@ textarea.native { padding: 12px 14px; min-height: 96px; resize: vertical; }
 .choice[aria-pressed='true'] { background: var(--c-black); color: #fff; }
 .choice small { font-size: 13px; color: var(--c-text-2); }
 .choice[aria-pressed='true'] small { color: #babbc2; }
+.choice:disabled { cursor: not-allowed; opacity: 0.55; box-shadow: none; }
+.choice small.choice-why { color: var(--c-negative-ink); }
 .seg { display: inline-flex; padding: 4px; gap: 4px; border-radius: 12px; background: var(--c-bg); }
 .seg button { min-height: 36px; padding: 0 14px; border: 0; border-radius: 9px; background: transparent; color: var(--c-text-2); font-weight: 600; cursor: pointer; }
 .seg button[aria-pressed='true'] { background: var(--c-black); color: #fff; }
