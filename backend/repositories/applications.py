@@ -89,6 +89,8 @@ class ApplicationRepository:
         status: str,
         explanation: str | None = None,
         enriched_data: dict | None = None,
+        outcome: str | None = None,
+        offer: dict | None = None,
     ) -> ApplicationOrm | None:
         """Сохраняет результат скоринга, обогащение и статус, пишет события"""
         now = datetime.now(timezone.utc)
@@ -97,6 +99,8 @@ class ApplicationRepository:
             values: dict = {
                 "scoring_result": scoring_result,
                 "status": status,
+                "outcome": outcome,
+                "offer": offer,
                 "updated_at": now,
             }
             if explanation is not None:
@@ -124,7 +128,7 @@ class ApplicationRepository:
                 ApplicationEventOrm(
                     application_id=application_id,
                     event_type="status_changed",
-                    payload={"status": status},
+                    payload={"status": status, "outcome": outcome},
                     created_at=now,
                 )
             )

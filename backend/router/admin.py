@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from models.auth import UserOrm
 from repositories.admin import AdminRepository
 from schemas.admin import SAdminApplicationListResponse, SAdminStatsResponse
-from schemas.applications import application_orm_to_schema
+from schemas.applications import ApplicationOutcome, ApplicationStatus, application_orm_to_schema
 from schemas.base import ErrorResponse, ValidationErrorResponse
 from utils.pagination import decode_cursor, encode_cursor
 from utils.security import require_admin
@@ -29,9 +29,11 @@ async def list_all_applications(
     cursor: str | None = None,
     direction: str = "forward",
     limit: int = 10,
+    status: ApplicationStatus | None = None,
+    outcome: ApplicationOutcome | None = None,
     current_user: UserOrm = Depends(require_admin),
 ):
-    """Возвращает все заявки (только для админа)"""
+    """Возвращает все заявки (только для админа). Фильтры: status, outcome (например, MANUAL_REVIEW)"""
     if limit < 1 or limit > 50:
         raise HTTPException(status_code=400, detail="Лимит должен быть от 1 до 50")
     if direction not in ("forward", "backward"):
@@ -48,6 +50,8 @@ async def list_all_applications(
             cursor_id=cursor_id,
             direction=direction,
             limit=limit,
+            status=status,
+            outcome=outcome,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

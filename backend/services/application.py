@@ -21,17 +21,70 @@ from services.enrichment import enrich
 from services.exceptions import ProductMismatchError, ProfileIncompleteError
 from services.products import (
     Applicant,
+    build_offer,
     company_age_months,
     derive_segment,
     mismatch_reasons,
     no_product_explanation,
     pick_product,
+    with_amount,
 )
 from services.scoring import decision_to_status
 from services.ws_manager import ws_manager
 
 
 NO_SUITABLE_PRODUCT = "NO_SUITABLE_PRODUCT"
+RECOMMENDED_AMOUNT_OUTSIDE_PRODUCTS = "RECOMMENDED_AMOUNT_OUTSIDE_PRODUCTS"
+
+
+def decide_offer(application: ApplicationOrm, response, products) -> tuple[str | None, dict | None, str | None]:
+    """
+    Решение банка поверх ответа модели: тип результата, условия предложения и пояснение.
+
+    Модель не знает каталога, поэтому:
+    - если ни один продукт не подошёл — отказ NO_SUITABLE_PRODUCT;
+    - если модель предлагает снизить сумму, а на неё выбранный продукт не выдаётся
+      (меньше минимума) — подбираем другой продукт; не подошёл ни один — ручная проверка.
+    Меняет response.decision на месте. Возвращает (outcome, offer, explanation).
+    """
+    applicant = _applicant_from_snapshot(application)
+    chosen = next((p for p in products if p.product_type == application.product_type), None)
+    if chosen is None:
+        response.decision = SDecisionResult(decision="decline", reason_codes=[NO_SUITABLE_PRODUCT], conditions=[])
+        return None, None, no_product_explanation(applicant)
+
+    decision = response.decision
+    if decision is None:
+        return None, None, None
+    grade = response.risk_grade
+
+    if decision.decision == "approve":
+        offer = build_offer(chosen, applicant.amount_rub, applicant.term_months, grade)
+        outcome = "ALTERNATIVE_PRODUCT" if application.product_selected_by_system else None
+        return outcome, offer, None
+
+    if decision.decision == "approve_with_conditions":
+        reduce = next((c for c in decision.conditions if c.code == "REDUCE_AMOUNT"), None)
+        if reduce is None:
+            return "COUNTER_OFFER", build_offer(chosen, applicant.amount_rub, applicant.term_months, grade), None
+        reduced = with_amount(applicant, reduce.recommended_amount_rub)
+        if not mismatch_reasons(chosen, reduced):
+            return "COUNTER_OFFER", build_offer(chosen, reduced.amount_rub, reduced.term_months, grade), None
+        alternative = pick_product(products, reduced)
+        if alternative is not None:
+            reduce.recommended_product_type = alternative.product_type
+            return "ALTERNATIVE_PRODUCT", build_offer(alternative, reduced.amount_rub, reduced.term_months, grade), None
+        response.decision = SDecisionResult(
+            decision="manual_review",
+            reason_codes=[*decision.reason_codes, RECOMMENDED_AMOUNT_OUTSIDE_PRODUCTS],
+            conditions=[],
+        )
+        return "MANUAL_REVIEW", None, None
+
+    if decision.decision == "manual_review":
+        return "MANUAL_REVIEW", None, None
+
+    return None, None, None
 
 
 def _applicant_from_snapshot(application: ApplicationOrm) -> Applicant:
@@ -168,24 +221,22 @@ class ApplicationService:
             raise
 
         response = proto_to_schema_response(proto_response)
-        explanation = None
-        if application.product_type is None:
-            # Ни один продукт не подошёл: оценка риска сохраняется для банка,
-            # но решение — отказ с понятной причиной
-            response.decision = SDecisionResult(
-                decision="decline", reason_codes=[NO_SUITABLE_PRODUCT], conditions=[]
-            )
-            explanation = no_product_explanation(_applicant_from_snapshot(application))
+        products = await ProductRepository.list_active()
+        outcome, offer, explanation = decide_offer(application, response, products)
 
         decision_value = response.decision.decision if response.decision else None
         client_chose_product = None if application.product_selected_by_system else application.product_type
         status = decision_to_status(decision_value, client_chose_product)
+        if status != "different":
+            outcome = None
 
         updated = await ApplicationRepository.update_scoring(
             application_id=application.application_id,
             scoring_result=response.model_dump(mode="json"),
             status=status,
             explanation=explanation,
+            outcome=outcome,
+            offer=offer,
         )
 
         await ws_manager.broadcast(

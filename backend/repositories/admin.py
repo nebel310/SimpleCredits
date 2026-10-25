@@ -15,20 +15,28 @@ class AdminRepository:
         cursor_id: int | None,
         direction: str,
         limit: int,
+        status: str | None = None,
+        outcome: str | None = None,
     ) -> tuple[list[ApplicationOrm], int | None, int | None]:
-        """Возвращает все заявки с курсорной пагинацией"""
+        """Возвращает все заявки с курсорной пагинацией; можно отфильтровать по статусу и типу результата"""
+        filters = []
+        if status:
+            filters.append(ApplicationOrm.status == status)
+        if outcome:
+            filters.append(ApplicationOrm.outcome == outcome)
         async with new_session() as session:
             if direction == "forward":
                 if cursor_id is not None:
                     query = (
                         select(ApplicationOrm)
-                        .where(ApplicationOrm.id > cursor_id)
+                        .where(ApplicationOrm.id > cursor_id, *filters)
                         .order_by(ApplicationOrm.id.asc())
                         .limit(limit + 1)
                     )
                 else:
                     query = (
                         select(ApplicationOrm)
+                        .where(*filters)
                         .order_by(ApplicationOrm.id.asc())
                         .limit(limit + 1)
                     )
@@ -42,13 +50,14 @@ class AdminRepository:
                 if cursor_id is not None:
                     query = (
                         select(ApplicationOrm)
-                        .where(ApplicationOrm.id < cursor_id)
+                        .where(ApplicationOrm.id < cursor_id, *filters)
                         .order_by(ApplicationOrm.id.desc())
                         .limit(limit + 1)
                     )
                 else:
                     query = (
                         select(ApplicationOrm)
+                        .where(*filters)
                         .order_by(ApplicationOrm.id.desc())
                         .limit(limit + 1)
                     )
@@ -74,20 +83,27 @@ class AdminRepository:
         by_status: Counter = Counter()
         by_product_type: Counter = Counter()
         by_risk_grade: Counter = Counter()
+        by_outcome: Counter = Counter()
+        by_decision: Counter = Counter()
         scores: list[int] = []
 
         for app in applications:
             by_status[app.status] += 1
             by_product_type[app.product_type or "unknown"] += 1
+            if getattr(app, "outcome", None):
+                by_outcome[app.outcome] += 1
 
             scoring = app.scoring_result
             if isinstance(scoring, dict):
                 grade = scoring.get("risk_grade")
                 score = scoring.get("score")
+                decision = (scoring.get("decision") or {}).get("decision")
                 if grade is not None:
                     by_risk_grade[grade] += 1
                 if isinstance(score, (int, float)):
                     scores.append(int(score))
+                if decision:
+                    by_decision[decision] += 1
 
         avg_score = float(sum(scores) / len(scores)) if scores else None
 
@@ -96,5 +112,7 @@ class AdminRepository:
             "by_status": dict(by_status),
             "by_product_type": dict(by_product_type),
             "by_risk_grade": dict(by_risk_grade),
+            "by_outcome": dict(by_outcome),
+            "by_decision": dict(by_decision),
             "avg_score": avg_score,
         }

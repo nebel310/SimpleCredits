@@ -12,6 +12,8 @@ RiskGrade = Literal["A", "B", "C", "D", "E"]
 Decision = Literal["approve", "approve_with_conditions", "manual_review", "decline"]
 ReasonImpact = Literal["positive", "negative", "neutral"]
 ApplicationStatus = Literal["pending", "failed", "confirmed", "different", "declined"]
+# Уточнение статуса different: что именно предлагает банк
+ApplicationOutcome = Literal["ALTERNATIVE_PRODUCT", "COUNTER_OFFER", "MANUAL_REVIEW"]
 
 DEFAULT_PRODUCT_TYPE: ProductType = "term_loan"
 
@@ -97,6 +99,21 @@ class SDecisionCondition(BaseModel):
     code: str
     description: str
     recommended_amount_rub: int
+    # Если на рекомендуемую сумму подходит другой продукт — какой (заполняет бэкенд)
+    recommended_product_type: ProductType | None = None
+
+
+class SOffer(BaseModel):
+    """Условия предложения банка: ставка внутри диапазона продукта по грейду, аннуитетный платёж"""
+    product_type: ProductType
+    product_code: str
+    product_name: str
+    amount_rub: int
+    term_months: int
+    rate_percent: float
+    monthly_payment_rub: int
+    total_payment_rub: int
+    overpayment_rub: int
 
 
 class SDecisionResult(BaseModel):
@@ -173,6 +190,8 @@ class SApplicationDetail(BaseModel):
     application_id: str
     status: ApplicationStatus
     product_selected_by_system: bool = False
+    outcome: ApplicationOutcome | None = None
+    offer: SOffer | None = None
     created_at: datetime
     updated_at: datetime
     application: SApplication
@@ -201,6 +220,8 @@ def application_orm_to_schema(application) -> SApplicationDetail:
         application_id=application.application_id,
         status=application.status,
         product_selected_by_system=bool(getattr(application, "product_selected_by_system", False)),
+        outcome=getattr(application, "outcome", None),
+        offer=SOffer.model_validate(application.offer) if getattr(application, "offer", None) else None,
         created_at=application.created_at,
         updated_at=application.updated_at,
         application=SApplication(

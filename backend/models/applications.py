@@ -19,6 +19,10 @@ class ApplicationOrm(Model):
     # True — продукт подобрал банк (клиент его не выбирал). Новые колонки только nullable:
     # в существующую базу они добавляются при старте (database.add_missing_columns)
     product_selected_by_system: Mapped[bool | None] = mapped_column(nullable=True)
+    # Тип результата внутри статуса different: ALTERNATIVE_PRODUCT / COUNTER_OFFER / MANUAL_REVIEW
+    outcome: Mapped[str | None] = mapped_column(nullable=True)
+    # Условия предложения: продукт, сумма, срок, ставка, платёж (services.products.build_offer)
+    offer: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     requested_amount_rub: Mapped[int] = mapped_column(nullable=False)
     term_months: Mapped[int] = mapped_column(nullable=False)
     purpose: Mapped[str] = mapped_column(nullable=False)
