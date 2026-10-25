@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEMO_COMPANIES } from './demo';
+import { deriveSegment } from './rules';
 
 // Ограничения из backend/schemas/applications.py и каталог продуктов из USERFLOW §4 (seed)
 const SEED: Record<string, { min: number; max: number; tmin: number; tmax: number; purposes?: string[] }> = {
@@ -27,6 +28,19 @@ describe.each(DEMO_COMPANIES.map((d) => [d.title, d] as const))('демо-ком
     expect(h.credit_utilization).toBeGreaterThanOrEqual(0);
     expect(h.credit_utilization).toBeLessThanOrEqual(1);
     expect(Number.isInteger(f.annual_revenue_rub)).toBe(true);
+  });
+
+  it('сегмент в заявке — тот, что определит банк', () => {
+    expect(d.application.segment).toBe(deriveSegment(c.employee_count, f.annual_revenue_rub));
+  });
+
+  it('дата регистрации в прошлом, месячная выручка согласована с годовой', () => {
+    expect(Date.parse(c.registration_date)).toBeLessThan(Date.now());
+    expect(Math.abs(f.monthly_revenue_rub * 12 - f.annual_revenue_rub) / f.annual_revenue_rub).toBeLessThan(0.05);
+  });
+
+  it('форма компании соответствует ИНН: 12 цифр — ИП, 10 — организация', () => {
+    expect(c.legal_form === 'individual_entrepreneur').toBe(c.inn.length === 12);
   });
 
   it('заявка укладывается в границы продукта', () => {

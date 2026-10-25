@@ -20,6 +20,7 @@ export function Login() {
   const [username, setUsername] = useState('');
   const [tried, setTried] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [signedInBefore] = useState(() => !!user);
 
   const go = (u: User) => nav(u.role === 'admin' ? '/bank' : profileComplete(u) ? '/home' : '/profile', { replace: true });
 
@@ -36,7 +37,9 @@ export function Login() {
     }
   });
 
-  if (user) return <Navigate to={user.role === 'admin' ? '/bank' : '/home'} replace />;
+  // Уже вошли и открыли экран входа — уводим в кабинет. Если вход идёт здесь, переходом управляет go():
+  // так демо-профиль успевает дозаполниться, а после регистрации клиент попадает в профиль
+  if (user && signedInBefore) return <Navigate to={user.role === 'admin' ? '/bank' : '/home'} replace />;
 
   const errors = {
     username: tab === 'register' && !username.trim() ? 'Укажите имя пользователя' : null,

@@ -32,7 +32,8 @@ export async function signInDemo(d: DemoCompany): Promise<User> {
     }
     me = await signIn(d.email, d.password, true);
   }
-  if (!profileComplete(me)) {
+  // Профиль демо-компании меняли (другой ИНН) — подставляем актуальный, чтобы сценарий сработал
+  if (!profileComplete(me) || me.company?.inn !== d.profile.company.inn) {
     me = await api.updateMe(d.profile);
     useSession.getState().setUser(me);
   }
