@@ -75,15 +75,13 @@ services:
       - ./backend:/app
       - backend_venv:/app/.venv
 
-# frontend:
-#   build: ./frontend
-#   container_name: frontend
-#   ports:
-#     - "5500:5500"
-#   volumes:
-#     - ./frontend:/app
-#   depends_on:
-#     - backend
+  frontend:
+    build: ./frontend
+    container_name: frontend
+    ports:
+      - "5500:80"
+    depends_on:
+      - backend
 
 volumes:
   postgres_data:
