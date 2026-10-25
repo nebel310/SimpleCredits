@@ -81,3 +81,50 @@ async def test_get_by_code_found():
 async def test_get_by_code_missing():
     """get_by_code возвращает None для несуществующего кода"""
     assert await ProductRepository.get_by_code("nope") is None
+
+async def test_ensure_products_upgrades_old_seed_conditions_keeps_custom_name():
+    """База из прошлой версии получает новые ставки и требования, ручное название остаётся"""
+    from repositories.products import SEED_VERSION
+    await ProductRepository.ensure_products()
+    async with database.new_session() as session:
+        await session.execute(
+            update(ProductOrm).where(ProductOrm.code == "leasing").values(
+                name="Мой лизинг", rate_min_percent=12.0, extras={"advance_percent_min": 10}
+            )
+        )
+        await session.commit()
+
+    await ProductRepository.ensure_products()
+
+    async with database.new_session() as session:
+        product = (await session.execute(select(ProductOrm).where(ProductOrm.code == "leasing"))).scalars().first()
+    assert product.name == "Мой лизинг"
+    assert product.rate_min_percent == 17.0
+    assert product.extras["seed_version"] == SEED_VERSION
+    assert product.extras["min_company_age_months"] == 12
+
+
+async def test_seed_rates_above_key_rate_and_every_purpose_covered():
+    """Ставки всех продуктов выше ключевой (14%), у каждой цели есть хотя бы один продукт"""
+    from schemas.applications import FinancingPurpose
+    from typing import get_args
+    assert all(p["rate_min_percent"] > 14.0 for p in SEED_PRODUCTS)
+    covered = {purpose for p in SEED_PRODUCTS for purpose in p["purposes"]}
+    assert set(get_args(FinancingPurpose)) <= covered
+
+
+async def test_seed_requirements_are_structured():
+    """Требования к форме и возрасту компании заданы полями, а не только текстом"""
+    for p in SEED_PRODUCTS:
+        assert p["extras"]["legal_forms"]
+        assert p["extras"]["min_company_age_months"] >= 0
+        assert p["segment"] in ("micro", "small", "both")
+
+
+async def test_every_purpose_has_product_for_each_segment():
+    """И микро-, и малый бизнес могут получить продукт под любую цель"""
+    from schemas.applications import FinancingPurpose
+    from typing import get_args
+    for segment in ("micro", "small"):
+        covered = {pu for p in SEED_PRODUCTS if p["segment"] in (segment, "both") for pu in p["purposes"]}
+        assert set(get_args(FinancingPurpose)) <= covered, segment
