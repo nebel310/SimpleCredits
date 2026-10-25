@@ -1,11 +1,11 @@
 import { expect, type Page } from '@playwright/test';
 
 export const DEMO = {
-  a: 'ИП «Компания A»',
-  b: 'ООО «Компания B»',
-  c: 'ООО «Компания C»',
-  d: 'ИП «Компания D»',
-  e: 'ООО «Компания E»',
+  a: 'ИП Компания 9986',
+  b: 'ООО Компания 2785',
+  c: 'ООО Компания 7752',
+  d: 'ИП Компания 7622',
+  e: 'ООО Компания 1178',
   bank: 'Банк · администратор',
 };
 
@@ -20,6 +20,13 @@ export async function demoLogin(page: Page, title: string) {
 export async function logout(page: Page) {
   await page.getByTitle('Выйти из аккаунта').click();
   await expect(page).toHaveURL(/#\/login/);
+}
+
+/** Открыть карточку последней заявки клиента */
+export async function openLastApplication(page: Page) {
+  await page.goto('./#/applications');
+  await page.locator('tbody tr').first().getByRole('link').click();
+  await expect(page).toHaveURL(/#\/applications\/[0-9a-f]{32}/);
 }
 
 /** Отправить форму новой заявки и дождаться карточки */
@@ -46,13 +53,12 @@ export async function register(page: Page, u = newUser()) {
   return u;
 }
 
-/** Заполнить профиль: реквизиты и кредитная история из моков бэкенда, финансы вручную */
+/** Заполнить профиль: реквизиты из ЕГРЮЛ, кредитная история из БКИ (подтягивается сама), финансы вручную */
 export async function fillProfile(page: Page, inn = '7701234567') {
   await page.getByLabel('ИНН').fill(inn);
   await page.getByRole('button', { name: 'Найти в ЕГРЮЛ' }).click();
   await expect(page.getByLabel('Название')).not.toHaveValue('');
-  await page.getByRole('button', { name: 'Запросить в БКИ' }).click();
-  await expect(page.getByLabel('Действующих кредитов')).not.toHaveValue('');
+  await expect(page.getByLabel('Кредитная история из БКИ')).toBeVisible();
   const fin: Record<string, string> = {
     'Выручка за год': '36000000',
     'Чистая прибыль за год': '2000000',
@@ -66,5 +72,5 @@ export async function fillProfile(page: Page, inn = '7701234567') {
   for (const [label, value] of Object.entries(fin)) await page.getByLabel(label).fill(value);
   await page.getByLabel('Отчётный период по').fill('2026-09-30');
   await page.getByRole('button', { name: 'Сохранить профиль' }).click();
-  await expect(page.getByText('Профиль сохранён')).toBeVisible();
+  await expect(page.getByText('Профиль сохранён').first()).toBeVisible();
 }

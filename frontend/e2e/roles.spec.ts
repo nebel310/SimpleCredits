@@ -8,7 +8,7 @@ test('без входа любой адрес ведёт на экран вхо�
   }
 });
 
-test('предприниматель не попадает в кабинет банка, банк — в кабинет клиента', async ({ page }) => {
+test('клиент не попадает в кабинет банка, банк — в кабинет клиента', async ({ page }) => {
   await demoLogin(page, DEMO.a);
   await page.goto('./#/bank');
   await expect(page).toHaveURL(/#\/home/);
@@ -51,5 +51,5 @@ test('кабинет банка: статистика, модель, карто�
   await page.locator('tbody tr').first().click();
   await expect(page).toHaveURL(/#\/bank\/applications\/[0-9a-f]{32}/);
   await expect(page.getByText('Решение скоринга')).toBeVisible();
-  await expect(page.getByRole('button', { name: /Подать заявку|Новая заявка/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Подать заявку|Новая заявка|Принять предложение|Отказаться/ })).toHaveCount(0);
 });

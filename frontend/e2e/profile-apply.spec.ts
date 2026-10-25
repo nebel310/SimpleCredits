@@ -18,15 +18,15 @@ test('профиль: проверки полей, подстановка из �
   await page.getByRole('button', { name: 'Сохранить профиль' }).click();
   await expect(page.getByText('Заполните отмеченные поля')).toBeVisible();
   await expect(page.getByText('ИНН — 10 цифр для ООО или 12 для ИП')).toBeVisible();
-  // загрузка лимитов больше 100% — ошибка
-  await page.getByLabel('Использование кредитных лимитов, %').fill('150');
-  await expect(page.getByText('От 0 до 100%')).toBeVisible();
-  await page.getByLabel('Использование кредитных лимитов, %').fill('40');
+  // кредитную историю не вводят руками — без запроса в БКИ профиль не сохранить
+  await expect(page.getByText('Запросите кредитную историю в БКИ').first()).toBeVisible();
   await fillProfile(page);
-  // в форме заявки — данные компании из профиля
-  await page.goto('./#/apply');
+  // после первого сохранения — сразу к заявке
+  await page.getByRole('button', { name: 'Подать заявку' }).click();
+  await expect(page).toHaveURL(/#\/apply/);
+  // в форме заявки — данные компании из профиля и сегмент, который определил банк
   await expect(page.getByText('Данные компании')).toBeVisible();
-  await page.locator('.choice', { hasText: 'Микрозайм' }).click();
+  await expect(page.getByText(/^Сегмент: /)).toBeVisible();
   await page.getByLabel('Сумма').fill('900000');
   await submitApplication(page);
   await expect(page.locator('.banner h2')).toBeVisible();
@@ -57,14 +57,21 @@ test('убыток вводится со знаком минус', async ({ page
   await expect(page.getByLabel('Чистая прибыль за год')).toHaveValue('−250 000');
 });
 
-test('форма заявки: границы суммы и срока по продукту, сегмент и цели', async ({ page }) => {
+test('форма заявки: продукты, которые не подходят компании, недоступны с причиной', async ({ page }) => {
+  await demoLogin(page, DEMO.b);
+  await page.goto('./#/apply');
+  await expect(page.getByText('Сегмент: малый бизнес.')).toBeVisible();
+  const micro = page.locator('.choice', { hasText: 'Микрозайм' });
+  await expect(micro).toBeDisabled();
+  await expect(micro).toContainText('Не подходит: только для сегмента «микробизнес»');
+});
+
+test('форма заявки: границы суммы и срока по продукту', async ({ page }) => {
   await demoLogin(page, DEMO.a);
   await page.goto('./#/apply');
   await page.locator('.choice', { hasText: 'Микрозайм' }).click();
   // подсказка — в рублях, без «0,1 млн»
   await expect(page.getByText('От 50 000 ₽ до 3 000 000 ₽')).toBeVisible();
-  // микрозайм только для микробизнеса
-  await expect(page.getByText('Продукт «Микрозайм» — только для сегмента «микробизнес»')).toBeVisible();
   await page.getByLabel('Сумма').fill('100');
   await page.getByLabel('Срок, месяцев').fill('48');
   await page.getByRole('button', { name: 'Отправить заявку' }).click();
