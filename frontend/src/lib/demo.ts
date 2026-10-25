@@ -26,7 +26,7 @@ export const DEMO_COMPANIES: DemoCompany[] = [
     password: 'demo-a-2026',
     username: 'demo_company_a',
     profile: {
-      company: { inn: '771234567890', ogrn: '318774600123456', legal_name: 'ИП Компания A', legal_form: 'individual_entrepreneur', okved: '47.11', region: 'Москва', registration_date: '2018-03-15T00:00:00Z', employee_count: 14 },
+      company: { inn: '7700001053', ogrn: '318774600123456', legal_name: 'ИП Компания A', legal_form: 'individual_entrepreneur', okved: '47.11', region: 'Москва', registration_date: '2018-03-15T00:00:00Z', employee_count: 14 },
       financials: { annual_revenue_rub: 48_000_000, annual_net_profit_rub: 5_600_000, ebitda_rub: 8_100_000, total_debt_rub: 1_800_000, monthly_revenue_rub: 4_000_000, monthly_expenses_rub: 3_300_000, accounts_receivable_rub: 1_400_000, cash_balance_rub: 2_200_000, period_end: period },
       credit_history: { active_obligations_count: 1, total_outstanding_rub: 1_200_000, monthly_debt_payments_rub: 65_000, max_days_past_due_12m: 0, has_current_past_due: false, credit_utilization: 0.22, closed_obligations_count: 5, applications_last_6m: 1 },
     },
@@ -40,7 +40,7 @@ export const DEMO_COMPANIES: DemoCompany[] = [
     password: 'demo-b-2026',
     username: 'demo_company_b',
     profile: {
-      company: { inn: '7712345678', ogrn: '1157746123456', legal_name: 'ООО Компания B', legal_form: 'llc', okved: '46.69', region: 'Санкт-Петербург', registration_date: '2015-06-01T00:00:00Z', employee_count: 42 },
+      company: { inn: '7800001481', ogrn: '1157746123456', legal_name: 'ООО Компания B', legal_form: 'llc', okved: '46.69', region: 'Санкт-Петербург', registration_date: '2015-06-01T00:00:00Z', employee_count: 42 },
       financials: { annual_revenue_rub: 30_000_000, annual_net_profit_rub: 3_300_000, ebitda_rub: 5_200_000, total_debt_rub: 2_500_000, monthly_revenue_rub: 2_500_000, monthly_expenses_rub: 2_050_000, accounts_receivable_rub: 2_100_000, cash_balance_rub: 1_900_000, period_end: period },
       credit_history: { active_obligations_count: 2, total_outstanding_rub: 2_000_000, monthly_debt_payments_rub: 110_000, max_days_past_due_12m: 0, has_current_past_due: false, credit_utilization: 0.3, closed_obligations_count: 6, applications_last_6m: 1 },
     },
@@ -54,7 +54,7 @@ export const DEMO_COMPANIES: DemoCompany[] = [
     password: 'demo-c-2026',
     username: 'demo_company_c',
     profile: {
-      company: { inn: '7723456789', ogrn: '1197746234567', legal_name: 'ООО Компания C', legal_form: 'llc', okved: '56.10', region: 'Казань', registration_date: '2019-09-10T00:00:00Z', employee_count: 25 },
+      company: { inn: '7900000029', ogrn: '1197746234567', legal_name: 'ООО Компания C', legal_form: 'llc', okved: '56.10', region: 'Казань', registration_date: '2019-09-10T00:00:00Z', employee_count: 25 },
       financials: { annual_revenue_rub: 26_000_000, annual_net_profit_rub: 1_400_000, ebitda_rub: 2_600_000, total_debt_rub: 5_000_000, monthly_revenue_rub: 2_100_000, monthly_expenses_rub: 1_850_000, accounts_receivable_rub: 900_000, cash_balance_rub: 700_000, period_end: period },
       credit_history: { active_obligations_count: 4, total_outstanding_rub: 4_750_000, monthly_debt_payments_rub: 500_000, max_days_past_due_12m: 5, has_current_past_due: false, credit_utilization: 0.68, closed_obligations_count: 3, applications_last_6m: 3 },
     },
