@@ -1,25 +1,36 @@
 # Статусы заявки
 
-По `USERFLOW.md` §5 и `backend/services/scoring.py`.
+По `USERFLOW.md` §5 и `backend/services/`.
 
 ```mermaid
 stateDiagram-v2
   [*] --> pending: POST /applications
   pending --> pending: enriched (ЕГРЮЛ, ФНС, БКИ)
-  pending --> confirmed: approve и продукт выбран
-  pending --> different: approve без продукта
-  pending --> different: approve_with_conditions
-  pending --> different: manual_review
-  pending --> declined: decline
+  pending --> confirmed: approve, продукт выбрал клиент
+  pending --> different: ALTERNATIVE_PRODUCT / COUNTER_OFFER / MANUAL_REVIEW
+  pending --> declined: decline или нет подходящего продукта
   pending --> failed: ошибка ML, сети или обогащения
-  confirmed --> [*]
-  different --> [*]
+  failed --> pending: retry
+  different --> confirmed: решение банка — одобрить
+  different --> different: решение банка — другая сумма
+  different --> declined: решение банка — отказать
+  confirmed --> accepted: accept
+  different --> accepted: accept (кроме MANUAL_REVIEW)
+  accepted --> issued: issue — модельный договор
+  confirmed --> rejected_by_client: reject
+  different --> rejected_by_client: reject (кроме MANUAL_REVIEW)
+  accepted --> rejected_by_client: reject
+  issued --> [*]
   declined --> [*]
-  failed --> [*]
+  rejected_by_client --> [*]
 ```
 
-`different` — не отказ: банк одобряет на других условиях, подобрал продукт сам или заявке нужна ручная проверка. Какой именно случай, фронтенд определяет по `scoring_result.decision.decision`.
+`different` — не отказ, его уточняет `outcome`:
 
-События заявки (`GET /applications/{id}/events`): `created` → `enriched` → `scored` → `status_changed` (или `failed`). По ним строится трекер: «Заявка создана → ЕГРЮЛ, ФНС, БКИ → Скоринг → Решение».
+- `ALTERNATIVE_PRODUCT` — банк предлагает другой продукт или подобрал продукт сам (клиент не выбирал);
+- `COUNTER_OFFER` — тот же продукт на другую сумму;
+- `MANUAL_REVIEW` — заявку смотрит сотрудник банка. Это не оффер: принять нечего, пока банк не решит.
 
-Дальнейших этапов (подписание, выдача, сопровождение) в MVP нет — путь заканчивается на статусе.
+События заявки (`GET /applications/{id}/events`): `created` → `enriched` → `scored` → `status_changed` (или `failed`), затем `retry_started`, `bank_decision`, `offer_accepted`, `issued`, `offer_rejected`. По ним строится трекер: «Заявка отправлена → Данные получены → Оценка завершена → Решение готово → Предложение принято → Кредит выдан».
+
+Выдача модельная: номер договора и запись в журнале, реальных проводок и документооборота нет.
