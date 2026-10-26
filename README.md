@@ -105,6 +105,7 @@ flowchart LR
 | Допущения и упрощения, какие данные и зачем, где решает система и где человек, польза клиенту и банку, ставки, производительность | [docs/assumptions.md](docs/assumptions.md) |
 | OpenAPI | [backend/webdoc.yaml](backend/webdoc.yaml), Swagger на http://localhost:3001/docs |
 | Тестовые сценарии и автотесты | [docs/test-scenarios.md](docs/test-scenarios.md) |
+| Продуктовое исследование, боли пользователей и JTBD | [docs/research.md](docs/research.md) |
 | Бэкенд: запуск, эндпоинты, переменные | [backend/README.md](backend/README.md) |
 | Фронтенд: экраны, работа с API, тестирование | [frontend/README.md](frontend/README.md), [frontend/docs/](frontend/docs) |
 | ML: данные, признаки, модели, политика, gRPC | [ml/README.md](ml/README.md), [docs/data_pipeline.md](docs/data_pipeline.md), [docs/mlflow.md](docs/mlflow.md) |
