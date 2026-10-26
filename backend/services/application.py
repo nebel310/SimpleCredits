@@ -15,6 +15,7 @@ from schemas.applications import (
     DEFAULT_PRODUCT_TYPE,
     SApplication,
     SApplicationCreateRequest,
+    SCreditHistory,
     SDecisionResult,
     SScoreApplicationRequest,
     application_orm_to_schema,
@@ -92,6 +93,26 @@ def decide_offer(application: ApplicationOrm, response, products) -> tuple[str |
         return "MANUAL_REVIEW", None, None
 
     return None, None, None
+
+
+def add_bank_credits(history: SCreditHistory, offers: list[dict]) -> tuple[SCreditHistory, dict | None]:
+    """
+    Добавляет к кредитной истории кредиты, которые наш банк уже выдал клиенту.
+    Мок БКИ о них не знает, а без них каждая новая заявка оценивалась бы как первая.
+    Упрощение: считаем, что погашений по ним ещё не было — остаток равен сумме кредита.
+    Возвращает историю и сводку для карточки (None — своих кредитов нет).
+    """
+    if not offers:
+        return history, None
+    count = len(offers)
+    outstanding = sum(int(o.get("amount_rub") or 0) for o in offers)
+    payments = sum(int(o.get("monthly_payment_rub") or 0) for o in offers)
+    merged = history.model_copy(update={
+        "active_obligations_count": history.active_obligations_count + count,
+        "total_outstanding_rub": history.total_outstanding_rub + outstanding,
+        "monthly_debt_payments_rub": history.monthly_debt_payments_rub + payments,
+    })
+    return merged, {"count": count, "outstanding_rub": outstanding, "monthly_payments_rub": payments}
 
 
 def _applicant_from_snapshot(application: ApplicationOrm) -> Applicant:
@@ -245,10 +266,21 @@ class ApplicationService:
 
         # Кредитную историю действующего клиента банк берёт из БКИ (USERFLOW §6, п. 5).
         # Снимок заявки обновляется, чтобы модель, карточка и блок БКИ показывали одно и то же.
-        # Если БКИ не ответил — остаётся история из профиля.
+        # Если БКИ не ответил — берётся история из профиля.
+        # К истории добавляются кредиты, которые наш банк уже выдал этому клиенту.
         bki_history = _credit_history_from_bki(enriched)
-        if bki_history is not None:
-            application = await ApplicationRepository.save_credit_history(application.application_id, bki_history) or application
+        own_offers = await ApplicationRepository.list_issued_offers(
+            application.user_id, exclude_application_id=application.application_id
+        )
+        base_history = bki_history
+        if base_history is None and own_offers:
+            user = await UserRepository.get_user_by_id(application.user_id)
+            base_history = (_build_credit_history(user) if user else None) or application_orm_to_schema(application).credit_history
+        if base_history is not None:
+            history, bank_credits = add_bank_credits(base_history, own_offers)
+            if bank_credits:
+                await ApplicationRepository.update_enriched(application.application_id, {**enriched, "bank_credits": bank_credits})
+            application = await ApplicationRepository.save_credit_history(application.application_id, history) or application
 
         sources = [k for k, v in enriched.items() if v is not None]
         await ws_manager.broadcast(

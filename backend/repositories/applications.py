@@ -187,6 +187,30 @@ class ApplicationRepository:
             return (await session.execute(query)).scalars().first()
 
     @classmethod
+    async def list_issued_offers(cls, user_id: int, exclude_application_id: str | None = None) -> list[dict]:
+        """Условия кредитов, которые банк уже выдал клиенту (статус issued)"""
+        async with new_session() as session:
+            query = select(ApplicationOrm.offer).where(
+                ApplicationOrm.user_id == user_id,
+                ApplicationOrm.status == "issued",
+            )
+            if exclude_application_id:
+                query = query.where(ApplicationOrm.application_id != exclude_application_id)
+            offers = (await session.execute(query)).scalars().all()
+        return [offer for offer in offers if offer]
+
+    @classmethod
+    async def update_enriched(cls, application_id: str, enriched_data: dict) -> None:
+        """Перезаписывает enriched_data без события (дополнение к уже сохранённым ответам источников)"""
+        async with new_session() as session:
+            await session.execute(
+                update(ApplicationOrm)
+                .where(ApplicationOrm.application_id == application_id)
+                .values(enriched_data=enriched_data)
+            )
+            await session.commit()
+
+    @classmethod
     async def save_credit_history(cls, application_id: str, credit_history: SCreditHistory) -> ApplicationOrm | None:
         """Перезаписывает кредитную историю в снимке заявки (данные БКИ на момент проверки)"""
         async with new_session() as session:
