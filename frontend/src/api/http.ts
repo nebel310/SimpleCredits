@@ -42,6 +42,9 @@ async function toError(res: Response): Promise<ApiError> {
   const detail: unknown = body?.detail;
   if (typeof detail === 'string' && detail) return new ApiError(res.status, detail, body);
   if (Array.isArray(detail)) {
+    // Проверка всего тела (loc: ['body']) — например, «Выручка в месяц не может быть больше выручки за год»: текст как есть
+    const whole = detail.filter((d) => Array.isArray(d?.loc) && d.loc.length <= 1 && typeof d?.msg === 'string');
+    if (whole.length) return new ApiError(res.status, whole.map((d) => String(d.msg).replace(/^Value error, /, '')).join('; '), body);
     // 422 от FastAPI: [{ loc: ['body', 'company', 'inn'], msg: '...' }]
     const fields = [...new Set(detail.map((d) => FIELD_LABEL[String(d?.loc?.[d.loc.length - 1])] ?? String(d?.loc?.[d.loc.length - 1] ?? '')).filter(Boolean))];
     return new ApiError(res.status, fields.length ? `Проверьте поля: ${fields.join(', ')}` : 'Проверьте заполненные поля');

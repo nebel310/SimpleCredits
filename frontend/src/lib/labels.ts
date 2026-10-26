@@ -179,6 +179,17 @@ export function display(a: Application, productName: string): Display {
   const st = STATUS[a.status];
   const base = { chip: st.chip, kind: st.kind, banner: st.banner, icon: st.icon };
   const terms = offerTerms(a);
+  if (a.offer_outdated) {
+    return {
+      chip: 'Условия устарели',
+      kind: 'attention',
+      banner: 'action',
+      icon: 'alert',
+      title: 'Предложение больше не действует',
+      text: 'После этого решения вам оформлен другой кредит — нагрузка изменилась, и прежние условия посчитаны без него. Новая заявка будет оценена с учётом всех кредитов.',
+      next: 'Подайте новую заявку с теми же параметрами.',
+    };
+  }
   switch (a.status) {
     case 'pending':
       return { ...base, title: 'Заявка обрабатывается', text: 'Проверяем компанию в ЕГРЮЛ, ФНС и БКИ и оцениваем риск. Обычно это несколько секунд.', next: 'Ничего делать не нужно — решение появится здесь само.' };
@@ -287,6 +298,7 @@ export interface TrackState {
 export function trackState(a: Application, events: AppEvent[]): TrackState {
   const has = (t: string) => events.some((e) => e.event_type === t);
   const processing = () => (has('scored') ? 3 : has('enriched') ? 2 : 1);
+  if (a.offer_outdated) return { labels: TRACK, index: a.status === 'accepted' ? 5 : 4, stop: true, sub: 'условия устарели' };
   switch (a.status) {
     case 'pending':
       return { labels: TRACK, index: processing(), sub: 'сейчас' };

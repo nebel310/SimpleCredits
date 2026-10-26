@@ -79,6 +79,11 @@ function ClientActions({ a, onUpdate }: { a: Application; onUpdate: (next: Appli
           Отказаться
         </Btn>
       )}
+      {a.offer_outdated && (
+        <Btn view="accent" to={`${again}&product=${o?.product_code ?? ''}`}>
+          Новая заявка с теми же параметрами
+        </Btn>
+      )}
       {a.status === 'declined' && (
         <Btn view={noProduct(a) ? 'accent' : 'outlined'} to={noProduct(a) ? again : '/apply'}>
           {noProduct(a) ? 'Изменить параметры' : 'Новая заявка'}
@@ -141,7 +146,7 @@ function View({ a, events, products, bank, onUpdate }: { a: Application; events:
   const e = a.enriched_data;
   const o = a.offer;
   const manual = a.status === 'different' && a.outcome === 'MANUAL_REVIEW';
-  const beforeIssue = a.status === 'confirmed' || a.status === 'different' || a.status === 'accepted';
+  const beforeIssue = (a.status === 'confirmed' || a.status === 'different' || a.status === 'accepted') && !a.offer_outdated;
   const facts = o
     ? [
         { label: 'Сумма', value: money(o.amount_rub) },

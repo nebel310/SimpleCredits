@@ -158,3 +158,15 @@ describe('factorTitle', () => {
   it('общее описание модели заменяем названием признака', () => expect(factorTitle({ feature: 'social_followers', description: 'Фактор повышает риск' })).toBe('Подписчики в соцсетях'));
   it('понятное описание модели оставляем', () => expect(factorTitle({ feature: 'debt_to_revenue', description: 'Низкая долговая нагрузка' })).toBe('Низкая долговая нагрузка'));
 });
+
+describe('устаревшее предложение', () => {
+  it('после выдачи другого кредита — «Условия устарели», трекер остановлен', () => {
+    const a = { ...app('confirmed', { decision: 'approve', offer: OFFER }), offer_outdated: true };
+    const d = display(a, 'X');
+    expect(d.chip).toBe('Условия устарели');
+    expect(d.next).toContain('новую заявку');
+    const t = trackState(a, []);
+    expect(t.stop).toBe(true);
+    expect(t.labels[t.index]).toBe('Предложение принято');
+  });
+});

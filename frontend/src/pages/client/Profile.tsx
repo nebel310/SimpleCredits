@@ -128,8 +128,16 @@ export function Profile() {
     bki: bkiInn !== v.inn ? (bkiInn ? 'ИНН изменился — запросите кредитную историю заново' : 'Запросите кредитную историю в БКИ') : null,
   };
   const finMissing = FIN_FIELDS.filter((f) => v.fin[f.key] === null).map((f) => f.key);
+  // Финансы не противоречат сами себе — как проверяет бэкенд
+  const yearly = v.fin.annual_revenue_rub;
+  const over = (x: number | null) => yearly !== null && x !== null && x > yearly;
+  const finErr: Partial<Record<keyof typeof v.fin, string>> = {
+    ...(over(v.fin.monthly_revenue_rub) ? { monthly_revenue_rub: 'Не больше выручки за год' } : {}),
+    ...(over(v.fin.annual_net_profit_rub) ? { annual_net_profit_rub: 'Не больше выручки за год' } : {}),
+    ...(over(v.fin.ebitda_rub) ? { ebitda_rub: 'Не больше выручки за год' } : {}),
+  };
   const chMissing = (Object.keys(v.ch) as (keyof typeof v.ch)[]).filter((k) => v.ch[k] === null);
-  const valid = !Object.values(err).some(Boolean) && finMissing.length === 0 && chMissing.length === 0;
+  const valid = !Object.values(err).some(Boolean) && finMissing.length === 0 && chMissing.length === 0 && Object.keys(finErr).length === 0;
 
   const save = useAction(async () => {
     const me = await api.updateMe({
@@ -190,7 +198,7 @@ export function Profile() {
         <h2 className="h2">Финансы за последний период</h2>
         <div className="grid-fields">
           {FIN_FIELDS.map((f) => (
-            <MoneyField key={f.key} label={f.label} signed={f.signed} value={v.fin[f.key]} onChange={(x) => set('fin', { ...v.fin, [f.key]: x })} error={tried && v.fin[f.key] === null ? 'Заполните' : null} hint={f.signed ? 'Убыток — со знаком минус' : undefined} />
+            <MoneyField key={f.key} label={f.label} signed={f.signed} value={v.fin[f.key]} onChange={(x) => set('fin', { ...v.fin, [f.key]: x })} error={finErr[f.key] ?? (tried && v.fin[f.key] === null ? 'Заполните' : null)} hint={f.signed ? 'Убыток — со знаком минус' : undefined} />
           ))}
           <DateField label="Отчётный период по" value={v.period_end} onChange={(x) => set('period_end', x)} error={show('period_end')} />
         </div>

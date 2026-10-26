@@ -133,3 +133,10 @@ describe('request', () => {
     expect(calls.filter((c) => c.url.startsWith('/api/auth/refresh'))).toHaveLength(1);
   });
 });
+
+describe('ошибки проверки всего тела', () => {
+  it('422 с loc [body] — текст проверки как есть', async () => {
+    mockFetch(() => respond(422, { detail: [{ loc: ['body'], msg: 'Value error, Выручка в месяц не может быть больше выручки за год' }] }));
+    await expect(request('PATCH', '/auth/me')).rejects.toMatchObject({ status: 422, message: 'Выручка в месяц не может быть больше выручки за год' });
+  });
+});

@@ -213,6 +213,8 @@ export interface Application {
   issued_at?: string | null;
   bank_decision?: BankDecision | null;
   actions?: AppAction[];
+  /** После оценки клиенту оформили другой кредит: условия больше не действуют, принять и оформить нельзя */
+  offer_outdated?: boolean;
 }
 
 export interface ApplicationList {
