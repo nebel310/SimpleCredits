@@ -22,6 +22,7 @@ from simplecredits.ml.data.schema import (
     CATEGORICAL_FEATURES,
     TARGET_COLUMN,
 )
+from simplecredits.ml.features.availability import serving_available_features
 from simplecredits.ml.features.features import (
     FEATURE_COLUMNS,
     NUMERIC_FEATURES,
@@ -30,7 +31,7 @@ from simplecredits.ml.features.features import (
 from simplecredits.ml.scoring.model import CatBoostProbabilityModel
 from simplecredits.ml.training.train import build_evaluation, ks_statistic, save_model
 
-CATBOOST_MODEL_VERSION = "catboost-v3"
+CATBOOST_MODEL_VERSION = "catboost-v4"
 DEFAULT_CATBOOST_MODEL_PATH = Path("artifacts/catboost_model.joblib")
 FEATURE_SELECTION_TOP_N = 30
 FINAL_RANDOM_STRENGTH = 5.0
@@ -143,11 +144,26 @@ def _select_features(
     target_train: pd.Series,
     seed: int,
     params: dict[str, Any] | None,
+    candidate_columns: list[str] | None = None,
 ) -> list[str]:
+    """Отбирает top-N признаков по важности CatBoost.
+
+    candidate_columns ограничивает пул отбора. По умолчанию это признаки,
+    доступные в проде (см. features/availability.py): модель должна опираться
+    только на то, что backend действительно передаёт, иначе она подбирает веса
+    под значения, которые в проде всегда равны дефолту схемы.
+    """
     selector = CatBoostClassifier(**_resolve_params(seed, params))
     selector.fit(features_train, target_train)
     importance = pd.Series(selector.get_feature_importance(), index=features_train.columns)
-    return importance.sort_values(ascending=False).head(FEATURE_SELECTION_TOP_N).index.tolist()
+    ranked = importance.sort_values(ascending=False)
+
+    if candidate_columns is not None:
+        allowed = set(candidate_columns) & set(features_train.columns)
+        ranked = ranked[[name for name in ranked.index if name in allowed]]
+
+    top_n = min(FEATURE_SELECTION_TOP_N, len(ranked))
+    return ranked.head(top_n).index.tolist()
 
 
 def _fit_artifact(
@@ -160,7 +176,10 @@ def _fit_artifact(
     test_size: float,
     params: dict[str, Any] | None,
 ) -> dict:
-    selected_features = _select_features(features_train, target_train, seed, params)
+    serving_features = serving_available_features()
+    selected_features = _select_features(
+        features_train, target_train, seed, params, candidate_columns=serving_features
+    )
     selected_categorical = [name for name in CATEGORICAL_FEATURES if name in selected_features]
     final_params = {**(params or {}), "random_strength": FINAL_RANDOM_STRENGTH}
     model = build_model(seed, {**final_params, "cat_features": selected_categorical})
@@ -202,6 +221,10 @@ def _fit_artifact(
                 "method": "catboost_importance",
                 "top_n": FEATURE_SELECTION_TOP_N,
                 "features_total": len(FEATURE_COLUMNS),
+                # Отбор ограничен признаками, доступными в проде: иначе модель
+                # опирается на то, что backend не передаёт, и в проде деградирует.
+                "restricted_to_serving_available": True,
+                "serving_available_total": len(serving_features),
                 "selected_features": selected_features,
             },
             "params": {

@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from simplecredits.ml.features.availability import serving_available_features
 from simplecredits.ml.scoring.model import CreditScorer
 from simplecredits.ml.serving.server import (
     DEFAULT_CATBOOST_MODEL_PATH,
@@ -23,10 +24,10 @@ from google.protobuf.timestamp_pb2 import Timestamp
 ML_ROOT = Path(__file__).resolve().parents[1]
 PROD_ARTIFACT = ML_ROOT / "artifacts" / "catboost_model.joblib"
 
-EXPECTED_FEATURES = 30
+MAX_FEATURES = 30
 # Минимально приемлемое качество на held-out групповом тесте. Замеренное
-# значение 0.8060; порог ниже, чтобы тест не дрожал, но отсекал явный мусор.
-MIN_ACCEPTABLE_TEST_AUC = 0.80
+# значение 0.7763; порог ниже, чтобы тест не дрожал, но отсекал явный мусор.
+MIN_ACCEPTABLE_TEST_AUC = 0.75
 
 
 @pytest.fixture(scope="module")
@@ -41,10 +42,30 @@ def test_default_model_path_points_at_catboost_artifact():
     assert DEFAULT_CATBOOST_MODEL_PATH == Path("artifacts/catboost_model.joblib")
 
 
-def test_prod_artifact_is_catboost_v3(prod_scorer):
+def test_prod_artifact_is_current_catboost(prod_scorer):
     assert prod_scorer.model_version == CATBOOST_MODEL_VERSION
     assert prod_scorer.model_type == "catboost"
-    assert len(prod_scorer.feature_columns) == EXPECTED_FEATURES
+    assert 0 < len(prod_scorer.feature_columns) <= MAX_FEATURES
+
+
+def test_prod_artifact_uses_only_serving_available_features(prod_scorer):
+    """Главный инвариант: модель не опирается на недоступные в проде признаки.
+
+    Признак вне прод-пула в проде всегда равен дефолту схемы, поэтому модель
+    подбирает под него веса, которые никогда не отработают. На catboost-v3 это
+    дало коллапс: PD всех заявок схлопнулся в 0.23-0.32, все получили грейд E
+    и manual_review, ни одного approve.
+
+    Это та же проверка, которую ml/Dockerfile выполняет при сборке образа
+    (scripts/verify_prod_model.py).
+    """
+    off_pool = sorted(set(prod_scorer.feature_columns) - set(serving_available_features()))
+
+    assert off_pool == [], f"model uses features backend cannot supply: {off_pool}"
+
+    selection = prod_scorer.model_info()["training"]["feature_selection"]
+    assert selection["restricted_to_serving_available"] is True
+    assert set(selection["selected_features"]) == set(prod_scorer.feature_columns)
 
 
 def test_prod_artifact_records_acceptable_metrics(prod_scorer):
@@ -128,6 +149,13 @@ def test_prod_artifact_scores_realistic_applications(prod_scorer):
     # Политика должна отказать по стоп-фактору текущей просрочки
     assert bad.policy.decision == "decline"
     assert "CURRENT_PAST_DUE" in bad.policy.reasons
+
+    # Защита от коллапса PD: на catboost-v3 хорошие и плохие заявки отличались
+    # на 0.077 по PD и обе попадали в грейд E, поэтому формально тест
+    # проходил, а модель в проде ничего не разделяла. Порог 0.12 выбран между
+    # замеренными 0.077 (v3, коллапс) и 0.157 (v4, рабочая модель).
+    assert bad.pd - good.pd > 0.12, f"PD spread too small: {bad.pd - good.pd:.4f}"
+    assert good.risk_grade != "E", f"good applicant graded {good.risk_grade}"
 
 
 def test_prod_artifact_serves_full_grpc_contract(prod_scorer):

@@ -301,6 +301,27 @@ FINANCING_PURPOSES = [
     "other",
 ]
 
+# Допустимые значения остальных категориальных признаков. Совпадают со
+# словарями обучающей таблицы пайплайна и с маппингом enum'ов proto в
+# serving/server.py (COMPANY_SEGMENTS, LEGAL_FORMS).
+SEGMENTS = ["micro", "small"]
+
+LEGAL_FORMS = ["llc", "ip", "jsc"]
+
+TAX_REGIMES = ["usn", "osn", "patent", "eshn"]
+
+CLIENT_RATINGS = ["A", "B", "C", "D", "E"]
+
+# Словарь значений для каждого категориального признака.
+CATEGORICAL_VOCABULARIES: dict[str, list[str]] = {
+    "product_type": PRODUCT_TYPES,
+    "purpose": FINANCING_PURPOSES,
+    "company_segment": SEGMENTS,
+    "legal_form": LEGAL_FORMS,
+    "tax_regime": TAX_REGIMES,
+    "client_rating": CLIENT_RATINGS,
+}
+
 BASE_DEFAULTS: dict[str, Any] = {
     "company_age_months": 36,
     "employee_count": 5,
