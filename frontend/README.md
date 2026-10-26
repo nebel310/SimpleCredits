@@ -91,7 +91,7 @@ npm run dev               # http://localhost:5173, /api → http://localhost:300
 
 ```bash
 npm test                 # 102 юнит-теста, бэкенд не нужен
-npm run test:e2e         # 25 e2e-сценариев против запущенного стека (по умолчанию http://localhost:5500)
+npm run test:e2e         # 26 e2e-сценариев против запущенного стека (по умолчанию http://localhost:5500)
 ```
 
 Что покрыто, что найдено и исправлено — `docs/testing.md`. Проверка скоринговой модели на реалистичных данных — `docs/model-check.md` и `scripts/model-check.py`.
