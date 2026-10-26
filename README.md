@@ -72,13 +72,13 @@ flowchart LR
   end
   ml["ml · gRPC :50051<br/>PD, балл, грейд,<br/>факторы, политика решений"]
   db[("PostgreSQL")]
-  s3[("S3-хранилище<br/>Silo, совместимо с MinIO")]
+  s3[("S3-хранилище<br/>Silo, совместимо с MinIO<br/>файлы /files")]
   user -->|"HTTP и WebSocket"| spa
-  spa -->|"/api, /ws"| api
+  spa -->|"/api: REST и WebSocket"| api
   api --- rules
   api --- deal
   api --- mocks
-  api -->|"gRPC ScoreApplication"| ml
+  api -->|"gRPC: ScoreApplication,<br/>GetModelInfo, BatchScore"| ml
   api --> db
   api --> s3
 ```
@@ -107,6 +107,7 @@ flowchart LR
 | Допущения и упрощения, какие данные и зачем, где решает система и где человек, польза клиенту и банку, ставки, производительность | [docs/assumptions.md](docs/assumptions.md) |
 | OpenAPI | [backend/webdoc.yaml](backend/webdoc.yaml), Swagger на http://localhost:3001/docs |
 | Тестовые сценарии и автотесты | [docs/test-scenarios.md](docs/test-scenarios.md) |
+| Продуктовое исследование, боли пользователей и JTBD | [docs/research.md](docs/research.md) |
 | Бэкенд: запуск, эндпоинты, переменные | [backend/README.md](backend/README.md) |
 | Фронтенд: экраны, работа с API, тестирование | [frontend/README.md](frontend/README.md), [frontend/docs/](frontend/docs) |
 | ML: данные, признаки, модели, политика, gRPC | [ml/README.md](ml/README.md), [docs/data_pipeline.md](docs/data_pipeline.md), [docs/mlflow.md](docs/mlflow.md) |
@@ -140,6 +141,18 @@ cd ml && pip install -e ".[dev]" && pytest
 | Синтетические данные | Демо-профили, моки ЕГРЮЛ/ФНС/БКИ и обучающая выборка ML — синтетические |
 | Автономность | Всё поднимается одной командой `docker compose up`; в работе нет запросов во внешние сервисы, шрифты и библиотеки — локально |
 | LLM только с открытыми весами | LLM не используется: объяснения строятся шаблонами по кодам причин |
+
+## Команда
+
+Решение разработано командой НИТУ МИСИС для хакатона **Альфа-Хак 2026 «Альфа Будущее»**, трек «Умный кредитный кабинет предпринимателя».
+
+| | Участник |
+|---|---|
+| 1 | [@Eliolaa](https://t.me/Eliolaa) |
+| 2 | [@satsm29](https://t.me/satsm29) |
+| 3 | [@omniikc](https://t.me/omniikc) |
+| 4 | [@vlados7529](https://t.me/vlados7529) |
+| 5 | [@aruuuttt05](https://t.me/aruuuttt05) |
 
 ## Структура репозитория
 

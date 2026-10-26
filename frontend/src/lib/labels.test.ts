@@ -28,7 +28,10 @@ function app(status: AppStatus, opts: { decision?: Decision; outcome?: Outcome |
     scoring_result: decision ? { application_id: 'x', score: 900, pd: 0.03, risk_grade: 'B', reason_codes: factors, model_version: 'v', decision: { decision, reason_codes: reasons, conditions: [] } } : null,
     enriched_data: null,
     explanation: null,
-    consents: null,
+    product_selected_by_system: bySystem,
+    outcome,
+    offer,
+    actions: [],
   };
 }
 
@@ -137,10 +140,18 @@ describe('факторы и рекомендации', () => {
 
 describe('eventText', () => {
   it('источники обогащения по-русски', () => expect(eventText(ev('enriched', { sources: ['egrul', 'fns', 'bki'] }))).toBe('Получены данные: ЕГРЮЛ, ФНС, БКИ'));
-  it('скоринг с баллом и грейдом', () => expect(eventText(ev('scored', { score: 972, risk_grade: 'B' }))).toBe('Скоринг готов: балл 972, грейд B'));
-  it('смена статуса', () => expect(eventText(ev('status_changed', { status: 'confirmed' }))).toBe('Статус: одобрено'));
-  it('ручное решение банка', () => expect(eventText(ev('manual_decision', { status: 'confirmed' }))).toBe('Банк одобрил заявку вручную'));
-  it('неизвестное событие — как есть', () => expect(eventText(ev('something'))).toBe('something'));
+  it('клиенту — без балла, банку — с баллом', () => {
+    expect(eventText(ev('scored', { score: 972, risk_grade: 'B' }))).toBe('Оценка риска завершена');
+    expect(eventText(ev('scored', { score: 972, risk_grade: 'B' }), true)).toBe('Оценка риска завершена: балл 972, грейд B');
+  });
+  it('решение с типом результата', () => expect(eventText(ev('status_changed', { status: 'different', outcome: 'COUNTER_OFFER' }))).toBe('Решение: предлагаем другие условия'));
+  it('события сделки', () => {
+    expect(eventText(ev('offer_accepted', { status: 'accepted' }))).toBe('Предложение принято');
+    expect(eventText(ev('issued', { contract_number: 'SC-1' }))).toBe('Кредит оформлен, договор № SC-1');
+    expect(eventText(ev('retry_started'))).toBe('Проверка запущена повторно');
+    expect(eventText(ev('bank_decision', { decision: 'decline' }))).toBe('Решение банка: отказать');
+  });
+  it('неизвестное событие — без технического кода', () => expect(eventText(ev('something'))).toBe('Событие по заявке'));
 });
 
 describe('factorTitle', () => {

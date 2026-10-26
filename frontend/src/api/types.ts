@@ -194,19 +194,6 @@ export interface ApplicationParams {
   submitted_at: string;
 }
 
-export interface ApplicationConsents {
-  personal_data_processing: boolean;
-  credit_history_request: boolean;
-  version: string;
-  accepted_at: string;
-}
-
-export interface ApplicationConsentsInput {
-  personal_data_processing: boolean;
-  credit_history_request: boolean;
-  version: string;
-}
-
 export interface Application {
   application_id: string;
   status: AppStatus;
@@ -219,7 +206,15 @@ export interface Application {
   scoring_result: ScoringResult | null;
   enriched_data: EnrichedData | null;
   explanation: string | null;
-  consents: ApplicationConsents | null;
+  product_selected_by_system?: boolean;
+  outcome?: Outcome | null;
+  offer?: Offer | null;
+  contract_number?: string | null;
+  issued_at?: string | null;
+  bank_decision?: BankDecision | null;
+  actions?: AppAction[];
+  /** После оценки клиенту оформили другой кредит: условия больше не действуют, принять и оформить нельзя */
+  offer_outdated?: boolean;
 }
 
 export interface ApplicationList {
@@ -235,6 +230,12 @@ export interface CreateApplicationInput {
   purpose: Purpose;
   segment: Segment;
   consents: ApplicationConsentsInput;
+}
+
+export interface ApplicationConsentsInput {
+  personal_data_processing: boolean;
+  credit_history_request: boolean;
+  version: string;
 }
 
 export interface AppEvent {

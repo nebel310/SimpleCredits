@@ -204,7 +204,7 @@ components:
         Тело `POST /applications`. `product_type` опционален.
         Если профиль уже заполнен через `PATCH /auth/me`, блоки `company`/`financials`/`credit_history`
         можно не передавать. Иначе они обязательны — иначе `400`.
-      required: [requested_amount_rub, term_months, purpose, segment, consents]
+      required: [requested_amount_rub, term_months, purpose, segment]
       properties:
         product_type:
           type: string
@@ -217,19 +217,6 @@ components:
         company: { $ref: '#/components/schemas/SCompany' }
         financials: { $ref: '#/components/schemas/SFinancials' }
         credit_history: { $ref: '#/components/schemas/SCreditHistory' }
-        consents: { $ref: '#/components/schemas/SApplicationConsents' }
-
-    SApplicationConsents:
-      type: object
-      description: |
-        Согласия клиента на обработку персональных данных и запрос кредитной истории.
-        Оба флага обязательны. `accepted_at` добавляет сервер при создании заявки.
-      required: [personal_data_processing, credit_history_request, version]
-      properties:
-        personal_data_processing: { type: boolean, enum: [true] }
-        credit_history_request: { type: boolean, enum: [true] }
-        version: { type: string, minLength: 1, maxLength: 32, example: '2026-10-25' }
-        accepted_at: { type: string, format: date-time, readOnly: true }
 
     SApplication:
       type: object
@@ -377,7 +364,9 @@ components:
       required: [id, event_type, created_at]
       properties:
         id: { type: integer }
-        event_type: { type: string, enum: [created, enriched, scored, status_changed, manual_decision, failed] }
+        event_type:
+          type: string
+          enum: [created, enriched, scored, status_changed, failed, retry_started, offer_accepted, issued, offer_rejected, bank_decision]
         payload:
           type: object
           additionalProperties: true
@@ -421,9 +410,6 @@ components:
           nullable: true
           description: "Снимок ответов моков: {egrul, fns, bki}, упавший = null"
         explanation: { type: string, nullable: true }
-        consents:
-          allOf: [{ $ref: '#/components/schemas/SApplicationConsents' }]
-          nullable: true
 
     SApplicationListResponse:
       type: object
@@ -483,16 +469,6 @@ components:
     # ============================================================
     # ADMIN
     # ============================================================
-
-    SAdminApplicationDecisionRequest:
-      type: object
-      description: |
-        Ручное решение банка по заявке в статусе `different` с решением модели `manual_review`.
-        Для остальных заявок возвращается `409`.
-      required: [decision]
-      properties:
-        decision: { type: string, enum: [approve, decline] }
-        comment: { type: string, maxLength: 1000, nullable: true }
 
     SAdminApplicationListResponse:
       type: object
@@ -1107,7 +1083,7 @@ paths:
   /admin/applications/{application_id}/decision:
     post:
       tags: [Admin]
-      summary: Ручное решение банка по заявке (только admin)
+      summary: Решение банка по заявке на ручной проверке (только admin)
       security: [{ bearerAuth: [] }]
       parameters:
         - { name: application_id, in: path, required: true, schema: { type: string } }
@@ -1115,21 +1091,14 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/SAdminApplicationDecisionRequest' }
+            schema: { $ref: '#/components/schemas/SBankDecisionRequest' }
       responses:
-        '200':
-          description: Заявка с обновлённым статусом
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/SApplicationDetail' }
+        '200': { description: Решение принято, content: { application/json: { schema: { $ref: '#/components/schemas/SApplicationDetail' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409':
-          description: Ручное решение недоступно для текущего статуса или решения модели
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409': { description: Заявка не на ручной проверке или на сумму нет продукта }
+        '422': { description: Для approve_with_conditions не указана сумма }
 
   /admin/stats/overview:
     get:

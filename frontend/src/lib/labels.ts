@@ -94,32 +94,23 @@ export function factorTitle(r: { feature: string; description: string }): string
   return r.description.startsWith('Фактор ') && FEATURE_NAME[r.feature] ? FEATURE_NAME[r.feature] : r.description;
 }
 
-/** Что клиент может изменить, чтобы улучшить оценку по этому фактору */
-export const FACTOR_ADVICE: Record<string, string> = {
-  requested_to_annual_revenue: 'Запросите сумму меньше или подтвердите годовую выручку отчётностью.',
-  log_requested_amount: 'Уменьшите запрашиваемую сумму.',
-  debt_service_ratio: 'Снизьте платежи по действующим кредитам или запросите меньшую сумму.',
-  debt_to_revenue: 'Снизьте общую долговую нагрузку.',
-  has_current_past_due: 'Закройте текущую просрочку — следующие заявки будут оцениваться лучше.',
-  max_days_past_due_12m: 'Закройте просрочки и поддерживайте платёжную дисциплину.',
-  credit_utilization: 'Снизьте загрузку кредитных лимитов.',
-  applications_last_6m: 'Не подавайте несколько заявок подряд: частая кредитная активность повышает риск.',
-  profitability: 'Подтвердите прибыль отчётностью.',
-  ebitda_margin: 'Подтвердите EBITDA и маржинальность отчётностью.',
-  cash_coverage: 'Пополните остаток на счёте или подтвердите стабильные поступления.',
-  txn_balance_latest: 'Поддерживайте положительный остаток на счёте.',
-  expense_ratio: 'Подтвердите структуру расходов или снизьте их долю.',
-  log_annual_revenue: 'Подтвердите годовую выручку отчётностью или выпиской.',
-  annual_revenue_rub: 'Подтвердите годовую выручку отчётностью или выпиской.',
-  tax_debt_rub: 'Погасите налоговую задолженность.',
-  unpaid_tax_count: 'Погасите налоговую задолженность.',
-  blocked_accounts_count: 'Разблокируйте счета в банке.',
-  bki_credit_score: 'Проверьте кредитную историю в БКИ и оспорьте ошибочные записи.',
-  company_age_months: 'История компании пока короткая — это ограничение, которое сглаживается со временем.',
-};
+/** Подтверждённые факторы — те, что посчитаны по данным заявки. Самые сильные сверху, не больше max */
+export function confirmedFactors(reasons: ReasonCode[], max = 5): ReasonCode[] {
+  return reasons
+    .filter((r) => !FEATURE_NOT_IN_APPLICATION.has(r.feature))
+    .sort((a, b) => Math.abs(b.contribution) - Math.abs(a.contribution))
+    .slice(0, max);
+}
 
-export function factorAdvice(feature: string): string | null {
-  return FACTOR_ADVICE[feature] ?? null;
+/** Рекомендации «что делать дальше»: сначала по причинам решения, потом по факторам риска. Без повторов */
+export function adviceFor(a: Application): string[] {
+  const out: string[] = [];
+  const add = (t?: string) => t && !out.includes(t) && out.push(t);
+  for (const c of a.scoring_result?.decision?.reason_codes ?? []) add(POLICY_ADVICE[c]);
+  if (a.status === 'declined' || a.outcome === 'COUNTER_OFFER' || a.outcome === 'MANUAL_REVIEW') {
+    for (const r of confirmedFactors(a.scoring_result?.reason_codes ?? [])) if (r.impact === 'negative') add(FACTOR_ADVICE[r.code]);
+  }
+  return out.slice(0, 3);
 }
 
 export const CONDITION_NAME: Record<string, string> = { REDUCE_AMOUNT: 'Снизить сумму' };
@@ -264,10 +255,18 @@ export function eventText(e: AppEvent, bank = false): string {
       return st && STATUS[st] ? `Решение: ${STATUS[st].chip.toLowerCase()}` : 'Статус изменён';
     }
     case 'failed':
-      return 'Ошибка обработки';
-    case 'manual_decision': {
-      const st = p.status as AppStatus | undefined;
-      return st === 'confirmed' ? 'Банк одобрил заявку вручную' : st === 'declined' ? 'Банк отклонил заявку вручную' : 'Ручное решение банка';
+      return 'Проверка прервалась из-за сбоя';
+    case 'retry_started':
+      return 'Проверка запущена повторно';
+    case 'offer_accepted':
+      return 'Предложение принято';
+    case 'issued':
+      return p.contract_number ? `Кредит оформлен, договор № ${p.contract_number}` : 'Кредит оформлен';
+    case 'offer_rejected':
+      return 'Отказ от предложения';
+    case 'bank_decision': {
+      const d = p.decision as keyof typeof BANK_DECISION_NAME | undefined;
+      return d && BANK_DECISION_NAME[d] ? `Решение банка: ${BANK_DECISION_NAME[d].toLowerCase()}` : 'Решение банка';
     }
     default:
       return 'Событие по заявке';

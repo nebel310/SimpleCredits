@@ -3,9 +3,12 @@ import { api, type AppAction, type Application, type AppEvent, type Product } fr
 import { useLiveUpdates } from '../../api/ws';
 import { useAction, useQuery } from '../../lib/hooks';
 import { loadProducts, productByType, productName } from '../../lib/catalog';
-import { date, dateTime, money, months, pct, time } from '../../lib/format';
-import { CONDITION_NAME, DECISION_NAME, FEATURE_NOT_IN_APPLICATION, factorAdvice, factorTitle, GRADE_KIND, LEGAL_FORM_NAME, POLICY_REASON, PURPOSE_NAME, SEGMENT_NAME, STATUS, eventText, outcomeText, trackIndex } from '../../lib/labels';
-import { Btn, Chip, EmptyState, ErrorState, Loading, Meter, PageTitle, StatusBanner, Tracker } from '../../ui/kit';
+import { date, dateTime, money, months, rate, time } from '../../lib/format';
+import { LEGAL_FORM_NAME, PURPOSE_NAME, SEGMENT_NAME, appTitle, display, eventColor, eventText, noProduct, trackState } from '../../lib/labels';
+import { Btn, Chip, Confirm, EmptyState, ErrorState, Loading, PageTitle, StatusBanner, Tracker, toast } from '../../ui/kit';
+import { BankDecisionForm, BankDecisionInfo } from './BankDecision';
+import { BankScoring, ClientFactors } from './DecisionFactors';
+import { OfferCard, WhatIf } from './OfferCard';
 
 const yesNo = (b: boolean) => (b ? 'да' : 'нет');
 
@@ -13,10 +16,6 @@ const yesNo = (b: boolean) => (b ? 'да' : 'нет');
 export function ApplicationView({ id, bank }: { id: string; bank?: boolean }) {
   const q = useQuery(() => Promise.all([api.application(id), api.events(id)]), [id]);
   const products = useQuery(loadProducts, []);
-  const decision = useAction(async (value: 'approve' | 'decline') => {
-    await api.adminDecide(id, value);
-    await q.reload(true);
-  });
 
   // Владелец получает обновления по WebSocket; после переподключения перечитываем заявку и события
   useLiveUpdates((m) => {
@@ -34,25 +33,29 @@ export function ApplicationView({ id, bank }: { id: string; bank?: boolean }) {
   if (q.error) return <ErrorState error={q.error.status === 404 ? 'Заявка не найдена' : q.error} onRetry={() => q.reload()} />;
   if (!q.data) return <Loading lines={6} />;
   const [a, events] = q.data;
-  return <View a={a} events={events} products={products.data} bank={bank} onDecision={decision.run} decisionPending={decision.pending} decisionError={decision.error} />;
+  const update = (next: Application) => {
+    q.setData([next, events]);
+    q.reload(true);
+  };
+  return <View a={a} events={events} products={products.data} bank={bank} onUpdate={update} />;
 }
 
-function View({ a, events, products, bank, onDecision, decisionPending, decisionError }: { a: Application; events: AppEvent[]; products?: Product[]; bank?: boolean; onDecision?: (value: 'approve' | 'decline') => void; decisionPending?: boolean; decisionError?: { message: string } | null }) {
-  const p = a.application;
-  const s = a.scoring_result;
-  const dec = s?.decision;
-  const name = productName(products, p.product_type);
-  const meta = STATUS[a.status];
-  const out = outcomeText(a, name);
-  const cond = dec?.conditions ?? [];
-  const reduce = cond.find((c) => c.code === 'REDUCE_AMOUNT');
-  const code = productByType(products, p.product_type)?.code;
-  const maxContribution = Math.max(0.0001, ...(s?.reason_codes ?? []).map((r) => Math.abs(r.contribution)));
-  const advice = [...new Set((s?.reason_codes ?? [])
-    .filter((r) => r.impact === 'negative')
-    .map((r) => factorAdvice(r.feature))
-    .filter((x): x is string => Boolean(x)))];
-  const e = a.enriched_data;
+/** Кнопки клиента — из поля actions, которое присылает бэкенд */
+function ClientActions({ a, onUpdate }: { a: Application; onUpdate: (next: Application) => void }) {
+  const [ask, setAsk] = useState<'issue' | 'reject' | null>(null);
+  const act = useAction(async (kind: 'accept' | 'issue' | 'reject' | 'retry') => {
+    const next = await api[kind](a.application_id);
+    setAsk(null);
+    onUpdate(next);
+    if (kind === 'accept') toast('Предложение принято — осталось подтвердить оформление');
+    if (kind === 'issue') toast('Кредит оформлен');
+    if (kind === 'reject') toast('Вы отказались от предложения');
+    if (kind === 'retry') toast(next.status === 'failed' ? 'Проверка снова не завершилась' : 'Проверка завершена', next.status === 'failed');
+  });
+  const can = (x: AppAction) => (a.actions ?? []).includes(x);
+  const o = a.offer;
+  const retryError = act.error && (act.error.status === 502 || act.error.status === 504) ? 'Сервис оценки пока недоступен. Заявка сохранена — попробуйте повторить через минуту.' : act.error?.message;
+  const again = `/apply?amount=${a.application.requested_amount_rub}&term=${a.application.term_months}&purpose=${a.application.purpose}`;
 
   return (
     <>
@@ -184,28 +187,6 @@ function View({ a, events, products, bank, onUpdate }: { a: Application; events:
       </StatusBanner>
       <Tracker index={track.index} stop={track.stop} labels={track.labels} sub={track.sub} />
 
-      {bank && a.status === 'different' && dec?.decision === 'manual_review' && (
-        <section className="card">
-          <h2 className="h2">Ручное решение</h2>
-          <p className="small muted" style={{ marginTop: 0 }}>
-            Модель отнесла заявку к пограничной зоне. Проверьте данные и примите решение — клиент увидит его сразу в карточке и получит событие в истории.
-          </p>
-          <div className="btn-row">
-            <Btn view="accent" loading={decisionPending} onClick={() => onDecision?.('approve')}>
-              Одобрить вручную
-            </Btn>
-            <Btn view="outlined" loading={decisionPending} onClick={() => onDecision?.('decline')}>
-              Отклонить
-            </Btn>
-          </div>
-          {decisionError && (
-            <span className="small" style={{ color: 'var(--c-negative-ink)', fontWeight: 600 }}>
-              {decisionError.message}
-            </span>
-          )}
-        </section>
-      )}
-
       <div className="row">
         <div className="grow stack">
           {bank && manual && <BankDecisionForm a={a} onDone={onUpdate} />}
@@ -216,45 +197,7 @@ function View({ a, events, products, bank, onUpdate }: { a: Application; events:
           {bank ? <BankScoring a={a} /> : <ClientFactors a={a} />}
           {!a.scoring_result && a.status !== 'pending' && (
             <section className="card">
-              <h2 className="h2">Что повлияло на оценку</h2>
-              <ul className="factors">
-                {s.reason_codes.map((r) => (
-                  <li key={r.code}>
-                    <div className="row-c between" style={{ flexWrap: 'nowrap' }}>
-                      <span>
-                        <b>{factorTitle(r)}</b>
-                        {bank && <span className="xs muted"> · {r.feature}</span>}
-                        {FEATURE_NOT_IN_APPLICATION.has(r.feature) && <span className="xs muted"> · в заявке таких данных нет, модель взяла значение по умолчанию</span>}
-                      </span>
-                      <Chip kind={r.impact === 'positive' ? 'high' : r.impact === 'negative' ? 'low' : 'neutral'}>{r.impact === 'positive' ? 'снижает риск' : r.impact === 'negative' ? 'повышает риск' : 'нейтрально'}</Chip>
-                    </div>
-                    <span className="bar" aria-hidden="true">
-                      <span style={{ width: `${(Math.abs(r.contribution) / maxContribution) * 100}%`, background: r.impact === 'positive' ? 'var(--c-high)' : r.impact === 'negative' ? 'var(--c-negative)' : 'var(--c-gray)' }} />
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
-
-          {advice.length > 0 && (
-            <section className="card">
-              <h2 className="h2">Что можно улучшить</h2>
-              <ul style={{ margin: 0, paddingLeft: 20 }}>
-                {advice.map((tip) => (
-                  <li key={tip} className="small">
-                    {tip}
-                  </li>
-                ))}
-              </ul>
-              <span className="xs muted">Рекомендации относятся только к факторам, на которые может повлиять компания.</span>
-            </section>
-          )}
-
-          {a.explanation && (
-            <section className="card">
-              <h2 className="h2">Комментарий модели</h2>
-              <p style={{ margin: 0 }}>{a.explanation}</p>
+              <EmptyState title="Оценки пока нет" text={a.status === 'failed' ? 'Проверка прервалась до оценки риска. Повторите её — заявка сохранена.' : 'Модель не вернула результат для этой заявки'} />
             </section>
           )}
 
@@ -303,18 +246,13 @@ function View({ a, events, products, bank, onUpdate }: { a: Application; events:
                         <dt>Индекс надёжности</dt>
                         <dd>{e.fns.reliability_score} / 100</dd>
                       </div>
-                       <div>
-                         <dt>Массовый адрес / директор</dt>
-                         <dd>
-                           {yesNo(e.fns.mass_address)} / {yesNo(e.fns.mass_director)}
-                         </dd>
-                       </div>
-                       <div>
-                         <dt>Последняя отчётность</dt>
-                         <dd>{date(e.fns.last_reporting_date)}</dd>
-                       </div>
-                     </dl>
-
+                      <div>
+                        <dt>Массовый адрес / директор</dt>
+                        <dd>
+                          {yesNo(e.fns.mass_address)} / {yesNo(e.fns.mass_director)}
+                        </dd>
+                      </div>
+                    </dl>
                   ) : (
                     <span className="small muted">Источник не ответил</span>
                   )}
@@ -335,22 +273,17 @@ function View({ a, events, products, bank, onUpdate }: { a: Application; events:
                         <dt>Остаток долга</dt>
                         <dd>{money(e.bki.total_outstanding_rub)}</dd>
                       </div>
-                       <div>
-                         <dt>Текущая просрочка</dt>
-                         <dd>{yesNo(e.bki.has_current_past_due)}</dd>
-                       </div>
-                       <div>
-                         <dt>Обновлено в источнике</dt>
-                         <dd>{date(e.bki.last_update)}</dd>
-                       </div>
-                     </dl>
-
+                      <div>
+                        <dt>Текущая просрочка</dt>
+                        <dd>{yesNo(e.bki.has_current_past_due)}</dd>
+                      </div>
+                    </dl>
                   ) : (
                     <span className="small muted">Источник не ответил</span>
                   )}
                 </div>
               </div>
-              <span className="xs muted">Снимок ответов мок-сервисов на момент подачи: {dateTime(a.created_at)}</span>
+              <span className="xs muted">Ответы ЕГРЮЛ, ФНС и БКИ на момент подачи заявки. Данные демонстрационные.</span>
             </section>
           )}
         </div>
@@ -455,29 +388,6 @@ function View({ a, events, products, bank, onUpdate }: { a: Application; events:
               </ul>
             )}
           </section>
-          {a.consents && (
-            <section className="card tight">
-              <h2 className="h3">Согласия</h2>
-              <dl className="dl">
-                <div>
-                  <dt>Персональные данные</dt>
-                  <dd>{a.consents.personal_data_processing ? 'предоставлено' : 'нет'}</dd>
-                </div>
-                <div>
-                  <dt>Кредитная история</dt>
-                  <dd>{a.consents.credit_history_request ? 'предоставлено' : 'нет'}</dd>
-                </div>
-                <div>
-                  <dt>Версия</dt>
-                  <dd>{a.consents.version}</dd>
-                </div>
-                <div>
-                  <dt>Принято</dt>
-                  <dd>{dateTime(a.consents.accepted_at)}</dd>
-                </div>
-              </dl>
-            </section>
-          )}
         </aside>
       </div>
     </>

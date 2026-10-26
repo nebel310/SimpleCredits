@@ -66,8 +66,7 @@ export const api = {
   adminApplications: (cursor?: string | null, limit = 50) => request<ApplicationList>('GET', '/admin/applications', { query: { cursor, limit } }),
   allAdminApplications: () => collect((c) => api.adminApplications(c)),
   adminStats: () => request<AdminStats>('GET', '/admin/stats/overview'),
-  adminDecide: (id: string, decision: 'approve' | 'decline', comment?: string) =>
-    request<Application>('POST', `/admin/applications/${id}/decision`, { body: { decision, comment } }),
+  adminDecision: (id: string, data: BankDecisionInput) => request<Application>('POST', `/admin/applications/${id}/decision`, { body: data }),
   modelInfo: () => request<ModelInfo>('GET', '/scoring/model-info'),
 
   // Мок-госуслуги бэкенда: подставить реквизиты и кредитную историю по ИНН

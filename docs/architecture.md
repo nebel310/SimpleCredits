@@ -18,13 +18,13 @@ flowchart LR
   end
   ml["ml · gRPC :50051<br/>CreditScorer + политика"]
   db[("PostgreSQL")]
-  s3[("S3-хранилище")]
+  s3[("S3-хранилище<br/>файлы /files")]
   user -->|"HTTP и WebSocket"| spa
-  spa -->|"/api, /ws"| api
+  spa -->|"/api: REST и WebSocket"| api
   api --- rules
   api --- deal
   api --- mocks
-  api -->|"gRPC ScoreApplication"| ml
+  api -->|"gRPC: ScoreApplication,<br/>GetModelInfo, BatchScore"| ml
   api --> db
   api --> s3
 ```

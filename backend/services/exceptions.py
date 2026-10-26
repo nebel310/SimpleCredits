@@ -20,5 +20,14 @@ class ProfileIncompleteError(Exception):
     """Профиль компании не заполнен и данных в теле заявки недостаточно"""
 
 
-class ManualDecisionNotAllowedError(Exception):
-    """Ручное решение доступно только для заявки из серой зоны"""
+class ProductMismatchError(Exception):
+    """Выбранный клиентом продукт не подходит под заявку или недоступен"""
+
+    def __init__(self, product_name: str, reasons: list[str]):
+        self.product_name = product_name
+        self.reasons = reasons
+        super().__init__(f"Продукт «{product_name}» не подходит: " + "; ".join(reasons))
+
+
+class RetryNotAllowedError(Exception):
+    """Повтор проверки недоступен: заявка не в статусе failed или повтор уже идёт"""
