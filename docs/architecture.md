@@ -1,6 +1,6 @@
 # Архитектура SimpleCredits
 
-Короткий обзор — в [README](../README.md). Здесь: компоненты, поток заявки, модель данных, состояния заявки и ключевые решения. Полный контракт API — [backend/webdoc.yaml](../backend/webdoc.yaml) и [USERFLOW.md](../USERFLOW.md).
+Короткий обзор — в [README](../README.md). Здесь: компоненты, поток заявки, модель данных, состояния заявки и ключевые решения. Допущения, упрощения и обоснования — [assumptions.md](assumptions.md). Полный контракт API — [backend/webdoc.yaml](../backend/webdoc.yaml) и [USERFLOW.md](../USERFLOW.md).
 
 ## Компоненты
 
