@@ -171,10 +171,18 @@ export interface Bki extends CreditHistory {
   last_update: string;
 }
 
+/** Кредиты, которые банк уже выдал клиенту: добавлены к истории из БКИ при оценке заявки */
+export interface BankCredits {
+  count: number;
+  outstanding_rub: number;
+  monthly_payments_rub: number;
+}
+
 export interface EnrichedData {
   egrul?: Egrul | null;
   fns?: Fns | null;
   bki?: Bki | null;
+  bank_credits?: BankCredits | null;
 }
 
 export interface ApplicationParams {

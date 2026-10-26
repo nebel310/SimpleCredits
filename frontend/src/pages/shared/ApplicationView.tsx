@@ -348,12 +348,24 @@ function View({ a, events, products, bank, onUpdate }: { a: Application; events:
                 <dt>Платежи по кредитам в месяц</dt>
                 <dd>{money(a.credit_history.monthly_debt_payments_rub)}</dd>
               </div>
+              {a.enriched_data?.bank_credits && (
+                <div>
+                  <dt>Из них кредиты нашего банка</dt>
+                  <dd>
+                    {money(a.enriched_data.bank_credits.monthly_payments_rub)} · {a.enriched_data.bank_credits.count} шт.
+                  </dd>
+                </div>
+              )}
               <div>
                 <dt>Просрочка сейчас</dt>
                 <dd>{yesNo(a.credit_history.has_current_past_due)}</dd>
               </div>
             </dl>
-            {a.enriched_data?.bki && <span className="xs muted">Кредитная история — из БКИ на момент подачи</span>}
+            {a.enriched_data?.bank_credits ? (
+              <span className="xs muted">Кредитная история — из БКИ и кредиты, которые наш банк уже выдал, на момент подачи</span>
+            ) : (
+              a.enriched_data?.bki && <span className="xs muted">Кредитная история — из БКИ на момент подачи</span>
+            )}
           </section>
           <section className="card tight">
             <h2 className="h3">История заявки</h2>
