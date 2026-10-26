@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest==9.1.1"]
+dev = ["pytest==9.1.1", "coverage==7.17.0"]
 tracking = ["mlflow-skinny==3.17.2"]
 
 [project.scripts]
@@ -40,3 +40,10 @@ where = ["src"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-q"
+
+[tool.coverage.run]
+source = ["src/simplecredits"]
+omit = ["src/simplecredits/scoring/v1/*"]
+
+[tool.coverage.report]
+show_missing = true

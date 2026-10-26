@@ -19,7 +19,7 @@ from simplecredits.ml.data.schema import (
     TARGET_COLUMN,
 )
 
-PIPELINE_VERSION = "raw-as-of-v3"
+PIPELINE_VERSION = "raw-as-of-v4"
 DEFAULT_DB_PATH = Path("data/raw/simplecredits_raw.db")
 DEFAULT_OUTPUT_PATH = Path("ml/data/training_table.csv")
 DEFAULT_HORIZON_DAYS = 30

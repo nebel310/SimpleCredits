@@ -9,6 +9,7 @@ import pandas as pd
 from simplecredits.ml.data.schema import (
     CATEGORICAL_FEATURES,
     FINANCING_PURPOSES,
+    HISTORY_NUMERIC_FEATURES,
     NEW_NUMERIC_FEATURES,
     PRODUCT_TYPES,
     RAW_NUMERIC_FEATURES,
@@ -167,6 +168,8 @@ def _new_feature_data(
     data["applicant_biometric_success_rate"] = _ratio(rng, n_samples, 0.0, 1.0)
     data["applicant_biometric_liveness_score"] = _ratio(rng, n_samples, 0.7, 1.0)
     data["employee_ratio_proxy"] = employee_count / np.maximum(company_age_months, 1.0)
+    for name in HISTORY_NUMERIC_FEATURES:
+        data[name] = np.zeros(n_samples)
     return data
 
 

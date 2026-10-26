@@ -23,10 +23,10 @@ from google.protobuf.timestamp_pb2 import Timestamp
 ML_ROOT = Path(__file__).resolve().parents[1]
 PROD_ARTIFACT = ML_ROOT / "artifacts" / "catboost_model.joblib"
 
-EXPECTED_FEATURES = 207
+EXPECTED_FEATURES = 30
 # Минимально приемлемое качество на held-out групповом тесте. Замеренное
-# значение 0.7868; порог ниже, чтобы тест не дрожал, но отсекал явный мусор.
-MIN_ACCEPTABLE_TEST_AUC = 0.70
+# значение 0.8060; порог ниже, чтобы тест не дрожал, но отсекал явный мусор.
+MIN_ACCEPTABLE_TEST_AUC = 0.80
 
 
 @pytest.fixture(scope="module")
@@ -41,7 +41,7 @@ def test_default_model_path_points_at_catboost_artifact():
     assert DEFAULT_CATBOOST_MODEL_PATH == Path("artifacts/catboost_model.joblib")
 
 
-def test_prod_artifact_is_catboost_v2(prod_scorer):
+def test_prod_artifact_is_catboost_v3(prod_scorer):
     assert prod_scorer.model_version == CATBOOST_MODEL_VERSION
     assert prod_scorer.model_type == "catboost"
     assert len(prod_scorer.feature_columns) == EXPECTED_FEATURES

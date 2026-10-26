@@ -18,7 +18,7 @@ COPY proto /app/proto
 COPY ml/pyproject.toml /app/ml/pyproject.toml
 COPY ml/src /app/ml/src
 COPY ml/scripts /app/ml/scripts
-# Production model (catboost-v2), trained on the raw-as-of-v3 pipeline table.
+# Production model (catboost-v3), trained on the raw-as-of-v4 pipeline table.
 COPY ml/artifacts/catboost_model.joblib /app/ml/artifacts/catboost_model.joblib
 
 WORKDIR /app/ml
@@ -30,7 +30,7 @@ RUN python scripts/generate_proto.py \
 RUN python -c "from simplecredits.ml.scoring.model import CreditScorer; \
 s = CreditScorer.load('/app/ml/artifacts/catboost_model.joblib'); \
 assert s.model_type == 'catboost', s.model_type; \
-assert len(s.feature_columns) == 207, len(s.feature_columns); \
+assert len(s.feature_columns) == 30, len(s.feature_columns); \
 print('model verified:', s.model_version, s.model_type, len(s.feature_columns), 'features')"
 
 ENV MODEL_PATH=/app/ml/artifacts/catboost_model.joblib \

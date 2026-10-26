@@ -214,6 +214,27 @@ def _growth(current: float, previous: float) -> float:
     return float(np.clip((current - previous) / previous, -1.0, 2.0))
 
 
+def _ratio_series(numerator: pd.Series, denominator: pd.Series, cap: float) -> np.ndarray:
+    top = pd.to_numeric(numerator, errors="coerce").fillna(0.0).to_numpy(dtype=float)
+    bottom = pd.to_numeric(denominator, errors="coerce").fillna(0.0).to_numpy(dtype=float)
+    result = np.divide(top, bottom, out=np.zeros_like(top), where=bottom > 0)
+    return np.clip(result, -cap, cap)
+
+
+def _put_stats(put: Any, prefix: str, values: Any) -> None:
+    array = np.asarray(values, dtype=float)
+    array = array[np.isfinite(array)]
+    if array.size == 0:
+        for suffix in ("mean", "std", "min", "max", "last"):
+            put(f"{prefix}_{suffix}", 0.0)
+        return
+    put(f"{prefix}_mean", float(np.mean(array)))
+    put(f"{prefix}_std", float(np.std(array)) if array.size > 1 else 0.0)
+    put(f"{prefix}_min", float(np.min(array)))
+    put(f"{prefix}_max", float(np.max(array)))
+    put(f"{prefix}_last", float(array[-1]))
+
+
 def _period_rows(frame: pd.DataFrame, table: str, as_of: pd.Timestamp) -> pd.DataFrame:
     return _as_of(frame, table, as_of)
 
@@ -349,6 +370,32 @@ def build_raw_features(
         put("statement_freshness_days", max(0.0, (as_of - available_at).days))
     else:
         put("statement_freshness_days", 0.0)
+    stmt_revenue = _numeric(available, "revenue_rub")
+    stmt_gross = _ratio_series(
+        _numeric(available, "gross_profit_rub"), stmt_revenue, 5.0
+    )
+    stmt_opex = _ratio_series(
+        _numeric(available, "operating_expenses_rub"), stmt_revenue, 5.0
+    )
+    stmt_equity = _ratio_series(
+        _numeric(available, "equity_rub"), _numeric(available, "total_assets_rub"), 5.0
+    )
+    stmt_net = _ratio_series(
+        _numeric(available, "net_profit_rub"), stmt_revenue, 5.0
+    )
+    stmt_debt = _ratio_series(
+        _numeric(available, "debt_rub"), stmt_revenue, 10.0
+    )
+    _put_stats(put, "stmt_gross", stmt_gross)
+    _put_stats(put, "stmt_opex", stmt_opex)
+    _put_stats(put, "stmt_equity", stmt_equity)
+    _put_stats(put, "stmt_net", stmt_net)
+    _put_stats(put, "stmt_debt", stmt_debt)
+    put("stmt_n", float(len(available)))
+    put(
+        "stmt_quality",
+        float(np.mean(stmt_gross) - np.mean(stmt_opex)) if stmt_gross.size and stmt_opex.size else 0.0,
+    )
     assets = _first(latest_statement, "total_assets_rub")
     liabilities = _first(latest_statement, "total_liabilities_rub")
     equity = _first(latest_statement, "equity_rub")
@@ -453,6 +500,29 @@ def build_raw_features(
     else:
         put("bki_report_age_days", 0.0)
 
+    bki_history = _as_of(
+        _company_frame(grouped, "credit_bureau_reports", company_id),
+        "credit_bureau_reports",
+        as_of,
+    ).copy()
+    if not bki_history.empty:
+        bki_history["_report_date"] = _parse_dates(bki_history["report_date"])
+        bki_history = bki_history.loc[bki_history["_report_date"].notna()].sort_values("_report_date")
+    bki_scores = _numeric(bki_history, "credit_score")
+    bki_past_due = _numeric(bki_history, "max_days_past_due_12m")
+    _put_stats(put, "bki_hist_score", bki_scores.to_numpy())
+    put("bki_hist_n", float(len(bki_history)))
+    if bki_scores.size > 2:
+        put("bki_hist_trend", float(np.polyfit(np.arange(bki_scores.size), bki_scores.to_numpy(), 1)[0]))
+        put("bki_hist_delta", float(bki_scores.iloc[-1] - bki_scores.iloc[0]))
+        put("bki_hist_last_age", max(0.0, (as_of - bki_history["_report_date"].max()).days))
+        put("bki_adj", float(bki_scores.iloc[-1] + 1.2 * bki_past_due.iloc[-1]))
+        put("bki_adj_mean", float(np.mean(bki_scores.to_numpy() + 1.2 * bki_past_due.to_numpy())))
+    else:
+        for name in ("bki_hist_trend", "bki_hist_delta", "bki_hist_last_age", "bki_adj", "bki_adj_mean"):
+            put(name, 0.0)
+    put("bki_last_restructures_count", _first(bki_report, "restructures_count"))
+
     courts = _as_of(_company_frame(grouped, "court_cases", company_id), "court_cases", as_of)
     roles = courts["role"].astype(str).str.lower() if "role" in courts.columns else pd.Series(dtype=str)
     put("court_defendant_count", float(roles.str.contains("defendant|ответчик", regex=True).sum()))
@@ -515,11 +585,61 @@ def build_raw_features(
     put("accounting_expense_to_annual", _ratio(accounting_expense, revenue))
     put("accounting_margin", _ratio(accounting_revenue - accounting_expense, accounting_revenue, cap=1.0))
     put("accounting_entry_count", len(accounting))
+    accounting_monthly = pd.DataFrame()
+    if not accounting.empty:
+        accounting_monthly = accounting.copy()
+        accounting_monthly["_period"] = _parse_dates(accounting_monthly["period"])
+        accounting_monthly["_revenue"] = np.where(
+            debit.str.startswith("90").to_numpy() | credit.str.startswith("90").to_numpy(),
+            accounting_amounts.to_numpy(),
+            0.0,
+        )
+        accounting_monthly["_expense"] = np.where(
+            debit.str.startswith(("20", "26", "44", "60", "68", "69")).to_numpy(),
+            accounting_amounts.to_numpy(),
+            0.0,
+        )
+        accounting_monthly = (
+            accounting_monthly.loc[accounting_monthly["_period"].notna()]
+            .groupby("_period", as_index=False)[["_revenue", "_expense"]]
+            .sum()
+            .sort_values("_period")
+        )
+    acct_revenue = _numeric(accounting_monthly, "_revenue")
+    acct_expenses = _numeric(accounting_monthly, "_expense")
+    acct_margin = _ratio_series(acct_revenue - acct_expenses, acct_revenue, 5.0)
+    _put_stats(put, "acct_margin", acct_margin)
+    put("acct_n", float(len(accounting_monthly)))
+    put("acct_expense_to_revenue", _ratio(float(acct_expenses.mean()) if not acct_expenses.empty else 0.0, float(acct_revenue.mean()) if not acct_revenue.empty else 0.0, cap=5.0))
+    put("acct_negative_share", float((acct_margin < 0).mean()) if acct_margin.size else 0.0)
+    if acct_margin.size > 2:
+        put("acct_margin_trend", float(np.polyfit(np.arange(acct_margin.size), acct_margin, 1)[0]))
+    else:
+        put("acct_margin_trend", 0.0)
 
     management = _latest(_company_frame(grouped, "management_reports", company_id), "management_reports", as_of)
     put("management_revenue_to_annual", _ratio(_first(management, "revenue_rub"), revenue))
     management_revenue = _first(management, "revenue_rub")
     put("management_margin", _ratio(_first(management, "profit_rub"), management_revenue, cap=1.0))
+    management_all = _as_of(
+        _company_frame(grouped, "management_reports", company_id),
+        "management_reports",
+        as_of,
+    ).copy()
+    if not management_all.empty:
+        management_all["_period"] = _parse_dates(management_all["period"])
+        management_all = management_all.loc[management_all["_period"].notna()].sort_values("_period")
+    mgmt_revenue = _numeric(management_all, "revenue_rub")
+    mgmt_expenses = _numeric(management_all, "expenses_rub")
+    mgmt_margin = _ratio_series(mgmt_revenue - mgmt_expenses, mgmt_revenue, 5.0)
+    _put_stats(put, "mgmt_margin", mgmt_margin)
+    put("mgmt_n", float(len(management_all)))
+    put("mgmt_cash_to_revenue", _ratio(_mean(management_all, "cash_rub"), float(mgmt_revenue.mean()) if not mgmt_revenue.empty else 0.0, cap=10.0))
+    put("mgmt_payable_to_revenue", _ratio(_mean(management_all, "accounts_payable_rub"), float(mgmt_revenue.mean()) if not mgmt_revenue.empty else 0.0, cap=10.0))
+    if mgmt_margin.size > 2:
+        put("mgmt_margin_trend", float(np.polyfit(np.arange(mgmt_margin.size), mgmt_margin, 1)[0]))
+    else:
+        put("mgmt_margin_trend", 0.0)
 
     marketplace = _as_of(_company_frame(grouped, "marketplace_sales", company_id), "marketplace_sales", as_of)
     put("marketplace_revenue_to_annual", _ratio(_sum(marketplace, "revenue_rub"), revenue))
@@ -561,6 +681,7 @@ def build_raw_features(
     put("hr_turnover", _share(_first(hr, "fires"), hr_headcount))
     put("hr_vacancy_rate", _share(_first(hr, "vacancies"), hr_headcount))
     put("hr_avg_salary_to_monthly_revenue", _ratio(_first(hr, "average_salary_rub"), monthly))
+    put("hr_n", float(len(_as_of(_company_frame(grouped, "hr_metrics", company_id), "hr_metrics", as_of))))
 
     logistics = _latest(_company_frame(grouped, "logistics", company_id), "logistics", as_of)
     put("logistics_delivery_days", _first(logistics, "average_delivery_days"))
@@ -568,6 +689,22 @@ def build_raw_features(
 
     utilities = _latest(_company_frame(grouped, "utilities", company_id), "utilities", as_of)
     put("utilities_debt_ratio", _share(_first(utilities, "debt_rub"), _first(utilities, "amount_rub")))
+    utilities_all = _as_of(
+        _company_frame(grouped, "utilities", company_id),
+        "utilities",
+        as_of,
+    ).copy()
+    if not utilities_all.empty:
+        utilities_all["_period"] = _parse_dates(utilities_all["period"])
+        utilities_all = utilities_all.loc[utilities_all["_period"].notna()].sort_values("_period")
+    util_debt = _ratio_series(
+        _numeric(utilities_all, "debt_rub"),
+        _numeric(utilities_all, "amount_rub"),
+        1.0,
+    )
+    _put_stats(put, "util_debt", util_debt)
+    put("util_n", float(len(utilities_all)))
+    put("util_debt_months", float((util_debt > 0).sum()))
 
     mobile = _latest(_company_frame(grouped, "mobile_operator", company_id), "mobile_operator", as_of)
     put("mobile_tenure_months", _first(mobile, "tenure_months"))

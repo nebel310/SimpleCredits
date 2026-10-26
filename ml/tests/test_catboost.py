@@ -1,3 +1,6 @@
+import json
+import sys
+
 import pandas as pd
 import pytest
 
@@ -5,6 +8,7 @@ pytest.importorskip("catboost")
 
 from catboost import CatBoostClassifier
 
+import simplecredits.ml.tracking as tracking
 from simplecredits.ml.data.generator import generate_dataset
 from simplecredits.ml.features.features import build_features
 from simplecredits.ml.scoring.model import CatBoostProbabilityModel, CreditScorer
@@ -12,7 +16,10 @@ from simplecredits.ml.training.catboost import (
     CATBOOST_MODEL_VERSION,
     CATBOOST_PARAMS,
     _split_dataset,
+    _training_params,
+    main,
     train_catboost_model,
+    train_catboost_model_with_evaluation,
 )
 from tests.test_scoring import BAD_APPLICATION, GOOD_APPLICATION
 
@@ -117,3 +124,123 @@ def test_training_falls_back_to_stratified_split_without_groups():
     assert artifact["training"]["split"] == "stratified_random"
     assert artifact["training"]["n_companies"] is None
     assert artifact["metrics"]["roc_auc_test"] > 0.5
+
+
+def test_catboost_training_with_evaluation_returns_evaluation_and_data():
+    artifact, evaluation, data = train_catboost_model_with_evaluation(
+        n_samples=500,
+        seed=13,
+        params={"iterations": 25},
+    )
+
+    assert len(data) == 500
+    assert artifact["model_version"] == CATBOOST_MODEL_VERSION
+    assert artifact["training"]["params"]["iterations"] == 25
+    assert 0.0 <= evaluation["metrics"]["roc_auc_test"] <= 1.0
+    assert evaluation["policy_summary"]["counts"]
+    assert len(evaluation["train_predictions"]) + len(evaluation["test_predictions"]) == 500
+
+
+def test_catboost_training_params_describe_source():
+    artifact = train_catboost_model(n_samples=400, seed=7, params={"iterations": 20})
+    params = _training_params(artifact, "file")
+
+    assert params["data_source"] == "file"
+    assert params["model_version"] == CATBOOST_MODEL_VERSION
+    assert params["n_samples"] == 400
+    assert params["n_train"] + params["n_test"] == 400
+    assert "cat_features" not in params
+
+
+def test_catboost_cli_writes_model_without_tracking(tmp_path, monkeypatch, capsys):
+    output = tmp_path / "catboost.joblib"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "simplecredits-catboost",
+            "--samples",
+            "400",
+            "--iterations",
+            "20",
+            "--seed",
+            "7",
+            "--out",
+            str(output),
+            "--no-tracking",
+        ],
+    )
+
+    main()
+
+    payload = json.loads(capsys.readouterr().out)
+    assert output.exists()
+    assert payload["model_path"] == str(output)
+    assert payload["model_version"] == CATBOOST_MODEL_VERSION
+    assert payload["tracking"] is None
+
+
+def test_catboost_cli_warns_when_tracking_fails(tmp_path, monkeypatch, capsys):
+    def fail_tracking(**_):
+        raise RuntimeError("tracking offline")
+
+    monkeypatch.setattr(tracking, "log_training_run", fail_tracking)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "simplecredits-catboost",
+            "--samples",
+            "400",
+            "--iterations",
+            "20",
+            "--seed",
+            "7",
+            "--out",
+            str(tmp_path / "catboost.joblib"),
+        ],
+    )
+
+    main()
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["tracking"] is None
+    assert "warning: MLflow tracking skipped: tracking offline" in captured.err
+
+
+def test_catboost_cli_requires_tracking_raises(tmp_path, monkeypatch):
+    def fail_tracking(**_):
+        raise RuntimeError("tracking offline")
+
+    monkeypatch.setattr(tracking, "log_training_run", fail_tracking)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "simplecredits-catboost",
+            "--samples",
+            "400",
+            "--iterations",
+            "20",
+            "--seed",
+            "7",
+            "--out",
+            str(tmp_path / "catboost.joblib"),
+            "--require-tracking",
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="tracking offline"):
+        main()
+
+
+def test_catboost_cli_alias_requires_registration(monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["simplecredits-catboost", "--alias", "prod"],
+    )
+
+    with pytest.raises(SystemExit):
+        main()

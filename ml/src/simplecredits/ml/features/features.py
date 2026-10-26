@@ -6,6 +6,7 @@ import pandas as pd
 from simplecredits.ml.data.schema import (
     BASE_NUMERIC_FEATURES,
     CATEGORICAL_FEATURES,
+    HISTORY_NUMERIC_FEATURES,
     NEW_NUMERIC_FEATURES,
     RAW_NUMERIC_FEATURES,
 )
@@ -51,7 +52,7 @@ NUMERIC_FEATURES = [
     "txn_inflow_180d",
     "txn_outflow_180d",
     "txn_balance_latest",
-] + NEW_NUMERIC_FEATURES
+] + NEW_NUMERIC_FEATURES + HISTORY_NUMERIC_FEATURES
 
 FEATURE_COLUMNS = NUMERIC_FEATURES + CATEGORICAL_FEATURES
 
@@ -180,7 +181,7 @@ def build_features(frame: pd.DataFrame) -> pd.DataFrame:
             values = values.clip(300.0, 900.0)
         result[column] = values
 
-    for column in NEW_NUMERIC_FEATURES:
+    for column in NEW_NUMERIC_FEATURES + HISTORY_NUMERIC_FEATURES:
         values = source[column].replace([np.inf, -np.inf], np.nan).fillna(0.0)
         result[column] = values.clip(-1_000_000.0, 1_000_000.0)
 

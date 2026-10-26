@@ -30,19 +30,24 @@ from simplecredits.ml.features.features import (
 from simplecredits.ml.scoring.model import CatBoostProbabilityModel
 from simplecredits.ml.training.train import build_evaluation, ks_statistic, save_model
 
-CATBOOST_MODEL_VERSION = "catboost-v2"
+CATBOOST_MODEL_VERSION = "catboost-v3"
 DEFAULT_CATBOOST_MODEL_PATH = Path("artifacts/catboost_model.joblib")
+FEATURE_SELECTION_TOP_N = 30
+FINAL_RANDOM_STRENGTH = 5.0
 
 # Колонка группировки для сплита: одна компания не должна попадать и в train,
 # и в test, иначе модель запоминает компанию, а не сигнал.
 GROUP_COLUMN = "company_id"
 
-# Параметры подобраны на данных пайплайна raw-as-of-v3 (5356 заявок,
+# Параметры подобраны на данных пайплайна raw-as-of-v4 (5356 заявок,
 # 374 дефолта, 3652 компании). Сетка depth x l2_leaf_reg x learning_rate
 # просеяна GroupKFold(5) CV с группировкой по company_id.
 #
 # Число итераций выбрано по CV-кривой AUC (100/150/200/250/300/400/600):
-# плато на 250 итерациях (CV AUC 0.7553 +- 0.0253).
+# плато на 250 итерациях (CV AUC 0.7553 +- 0.0253 для полного набора).
+# Финальная модель отбирает top-30 признаков по важности селектора и
+# использует random_strength=5: GroupKFold(5) CV 0.7757 +- 0.0189,
+# grouped held-out 0.8060.
 #
 # Early stopping здесь не используется намеренно. Валидация, вырезанная из
 # train, слишком мала (~75 позитивов), из-за чего best_iteration скачет от 19
@@ -133,6 +138,18 @@ def build_model(
     return CatBoostClassifier(**_resolve_params(seed, params))
 
 
+def _select_features(
+    features_train: pd.DataFrame,
+    target_train: pd.Series,
+    seed: int,
+    params: dict[str, Any] | None,
+) -> list[str]:
+    selector = CatBoostClassifier(**_resolve_params(seed, params))
+    selector.fit(features_train, target_train)
+    importance = pd.Series(selector.get_feature_importance(), index=features_train.columns)
+    return importance.sort_values(ascending=False).head(FEATURE_SELECTION_TOP_N).index.tolist()
+
+
 def _fit_artifact(
     data: pd.DataFrame,
     features_train: pd.DataFrame,
@@ -143,12 +160,14 @@ def _fit_artifact(
     test_size: float,
     params: dict[str, Any] | None,
 ) -> dict:
-    resolved_params = _resolve_params(seed, params)
-    model = build_model(seed, params)
-    model.fit(features_train, target_train)
+    selected_features = _select_features(features_train, target_train, seed, params)
+    selected_categorical = [name for name in CATEGORICAL_FEATURES if name in selected_features]
+    final_params = {**(params or {}), "random_strength": FINAL_RANDOM_STRENGTH}
+    model = build_model(seed, {**final_params, "cat_features": selected_categorical})
+    model.fit(features_train[selected_features], target_train)
 
-    train_probability = model.predict_proba(features_train)[:, 1]
-    test_probability = model.predict_proba(features_test)[:, 1]
+    train_probability = model.predict_proba(features_train[selected_features])[:, 1]
+    test_probability = model.predict_proba(features_test[selected_features])[:, 1]
     test_auc = float(roc_auc_score(target_test, test_probability))
     metrics = {
         "roc_auc_train": round(float(roc_auc_score(target_train, train_probability)), 4),
@@ -158,6 +177,7 @@ def _fit_artifact(
         "brier_test": round(float(brier_score_loss(target_test, test_probability)), 4),
         "pd_mean_test": round(float(test_probability.mean()), 4),
     }
+    resolved_params = _resolve_params(seed, final_params)
 
     return {
         "model": model,
@@ -166,9 +186,9 @@ def _fit_artifact(
         "model_type": "catboost",
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "metrics": metrics,
-        "feature_columns": FEATURE_COLUMNS,
-        "numeric_features": NUMERIC_FEATURES,
-        "categorical_features": CATEGORICAL_FEATURES,
+        "feature_columns": selected_features,
+        "numeric_features": [name for name in NUMERIC_FEATURES if name in selected_features],
+        "categorical_features": selected_categorical,
         "training": {
             "n_samples": int(len(data)),
             "n_train": int(len(features_train)),
@@ -178,6 +198,12 @@ def _fit_artifact(
             "test_size": test_size,
             "split": "grouped_by_company" if _has_groups(data) else "stratified_random",
             "n_companies": int(data[GROUP_COLUMN].nunique()) if _has_groups(data) else None,
+            "feature_selection": {
+                "method": "catboost_importance",
+                "top_n": FEATURE_SELECTION_TOP_N,
+                "features_total": len(FEATURE_COLUMNS),
+                "selected_features": selected_features,
+            },
             "params": {
                 key: value
                 for key, value in resolved_params.items()

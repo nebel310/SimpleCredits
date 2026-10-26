@@ -38,7 +38,7 @@ ML-сервис кредитного скоринга для конвейера 
                     │                     ml/                             │
                     │                                                     │
  raw SQLite ──────► │  data/pipeline.py ──► training_table.csv            │
- data/raw/*.db      │  (point-in-time, raw-as-of-v3)                      │
+  data/raw/*.db      │  (point-in-time, raw-as-of-v4)                      │
                     │        │                                            │
  generator.py ─────►│        ▼                                            │
  (synthetic)        │  features/features.py ──► обучение (train.py /      │
@@ -119,7 +119,7 @@ python -m simplecredits.ml.data.generator --out data/synthetic_applications.csv 
 
 ### Point-in-time пайплайн обучения
 
-`data/pipeline.py` (версия `raw-as-of-v3`) собирает обучающую таблицу из сырой SQLite-базы `data/raw/simplecredits_raw.db` (генерируется `tools/rawdata/generator.py` в корне репозитория):
+`data/pipeline.py` (версия `raw-as-of-v4`) собирает обучающую таблицу из сырой SQLite-базы `data/raw/simplecredits_raw.db` (генерируется `tools/rawdata/generator.py` в корне репозитория):
 
 ```bash
 python -m simplecredits.ml.data.pipeline --db data/raw/simplecredits_raw.db \
@@ -165,9 +165,9 @@ simplecredits-train --samples 20000 --seed 42 --out artifacts/model.joblib --no-
 
 ### CatBoost
 
-`training/catboost.py`, версия `catboost-v2` — боевая модель.
+`training/catboost.py`, версия `catboost-v3` — боевая модель.
 
-Параметры: 250 итераций, `depth = 3`, `lr = 0.03`, `l2_leaf_reg = 10`. Категориальные признаки передаются нативно (`cat_features`); reason-коды считаются через SHAP-вклады CatBoost.
+Параметры: 250 итераций, `depth = 3`, `lr = 0.03`, `l2_leaf_reg = 10`, `random_strength = 5`. Финальная модель отбирает top-30 признаков по важности селектора CatBoost. Категориальные признаки передаются нативно (`cat_features`); reason-коды считаются через SHAP-вклады CatBoost.
 
 **Методология подбора** (зафиксирована в комментариях к `CATBOOST_PARAMS`):
 
@@ -180,10 +180,12 @@ simplecredits-train --samples 20000 --seed 42 --out artifacts/model.joblib --no-
 
 | Метрика | Значение |
 |---|---|
-| ROC-AUC | 0.7868 (по 5 сидам: 0.7725 ± 0.0152) |
-| Gini | 0.5736 |
-| KS | 0.4744 |
-| Brier | 0.0638 |
+| ROC-AUC | 0.8060 (GroupKFold(5) CV: 0.7757 ± 0.0189) |
+| Gini | 0.6121 |
+| KS | 0.4858 |
+| Brier | 0.0630 |
+
+Тест содержит 120 сентябрьских заявок, у которых генератор ещё не создаёт события дефолта (события есть только по заявкам до 30 августа). На полностью зрелых заявках ROC-AUC — 0.7894.
 
 Риск-грейды хорошо разделены и откалиброваны: A 0.0% → B 2.1% → C 10.4% → D 17.0% → E 28.6% фактических дефолтов.
 
@@ -352,14 +354,14 @@ Env по умолчанию: `MODEL_PATH=/app/ml/artifacts/model.joblib`, `GRPC_
 
 **Почему это важно для качества модели.** `bki_credit_score` — самый весомый признак CatBoost (~49% важности). Без него ML подставляет дефолт схемы (600), и AUC падает с ~0.76 до ~0.55, а ~78% заявок уходит в грейд E. Поэтому обогащение обязано доходить до ML — `test_prod_model.py` и `test_enrichment_service.py::test_extract_ml_extra_features_*` это фиксируют.
 
-Прод-модель — закоммиченный артефакт `artifacts/catboost_model.joblib` (catboost-v2, 207 признаков). Он кладётся в образ при сборке (`ml/Dockerfile`), а не обучается на синтетике; сборка проверяет тип модели и число признаков и падает при несоответствии.
+Прод-модель — закоммиченный артефакт `artifacts/catboost_model.joblib` (catboost-v3, 30 признаков). Он кладётся в образ при сборке (`ml/Dockerfile`), а не обучается на синтетике; сборка проверяет тип модели и число признаков и падает при несоответствии.
 
 ## Тесты
 
 ```bash
 cd ml
 pip install -e ".[dev]"
-pytest            # 30 тестов
+pytest            # 105 тестов
 ```
 
 Покрытие: генератор данных, сборка фичей (в т.ч. вырожденные знаменатели), point-in-time пайплайн (лейблы, цензурирование, манифест), обе модели обучения, политика, скоринг, маппинг proto↔row (включая отклонение неизвестных extra-признаков), MLflow-трекинг и **e2e-тест gRPC** (реальный сервер на случайном порту).
