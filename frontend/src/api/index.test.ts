@@ -36,7 +36,7 @@ describe('действия по заявке', () => {
       seen.push(init);
       return new Response(JSON.stringify({ application_id: 'x' }), { status: 201 });
     }));
-    await api.createApplication({ product_type: null, requested_amount_rub: 500_000, term_months: 12, purpose: 'equipment', segment: 'micro' }, 'attempt-1');
+    await api.createApplication({ product_type: null, requested_amount_rub: 500_000, term_months: 12, purpose: 'equipment', segment: 'micro', consents: { personal_data_processing: true, credit_history_request: true, version: '2026-10-25' } }, 'attempt-1');
     expect((seen[0].headers as Record<string, string>)['Idempotency-Key']).toBe('attempt-1');
   });
 

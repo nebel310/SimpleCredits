@@ -19,8 +19,9 @@ class ApplicationRepository:
         product_type: str | None = None,
         product_selected_by_system: bool = False,
         idempotency_key: str | None = None,
+        consents: dict | None = None,
     ) -> ApplicationOrm:
-        """Создаёт заявку со снимком профиля и пишет событие created"""
+        """Создаёт заявку со снимком профиля и согласий и пишет событие created"""
         application_id = uuid.uuid4().hex
         now = datetime.now(timezone.utc)
         actual_product_type = product_type if product_type is not None else data.application.product_type
@@ -66,6 +67,7 @@ class ApplicationRepository:
                 credit_utilization=data.credit_history.credit_utilization,
                 closed_obligations_count=data.credit_history.closed_obligations_count,
                 applications_last_6m=data.credit_history.applications_last_6m,
+                consents=consents,
                 created_at=now,
                 updated_at=now,
             )

@@ -12,7 +12,7 @@ export interface DemoCompany {
   username: string;
   profile: Required<Pick<ProfileInput, 'company' | 'financials' | 'credit_history'>>;
   /** Параметры, которые подставляются в форму новой заявки */
-  application: CreateApplicationInput;
+  application: Omit<CreateApplicationInput, 'consents'>;
 }
 
 const period = '2026-09-30T00:00:00Z';

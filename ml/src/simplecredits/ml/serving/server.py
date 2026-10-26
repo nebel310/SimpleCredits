@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 import time
 from concurrent import futures
 from datetime import datetime, timezone
@@ -13,7 +14,11 @@ from grpc_health.v1 import health, health_pb2, health_pb2_grpc
 
 from simplecredits.ml.data.schema import CATEGORICAL_FEATURES, RAW_NUMERIC_FEATURES
 from simplecredits.ml.scoring.model import CreditScorer, ScoreResult
-from simplecredits.ml.training.train import DEFAULT_MODEL_PATH, save_model, train_model
+from simplecredits.ml.training.catboost import (
+    DEFAULT_CATBOOST_MODEL_PATH,
+    train_catboost_model,
+)
+from simplecredits.ml.training.train import save_model
 from simplecredits.scoring.v1 import scoring_pb2, scoring_pb2_grpc
 
 PRODUCT_TYPES = {
@@ -38,6 +43,21 @@ RISK_GRADES = {
     "C": scoring_pb2.RISK_GRADE_C,
     "D": scoring_pb2.RISK_GRADE_D,
     "E": scoring_pb2.RISK_GRADE_E,
+}
+
+# Сегмент и организационно-правовая форма приходят в proto, но раньше не
+# маппились в признаки — модель получала дефолты схемы вместо реальных
+# значений. Словарь приведён к тому, что используется в обучающей таблице
+# пайплайна: legal_form там хранится как ip / jsc / llc, а не как имена enum'ов.
+COMPANY_SEGMENTS = {
+    scoring_pb2.BUSINESS_SEGMENT_MICRO: "micro",
+    scoring_pb2.BUSINESS_SEGMENT_SMALL: "small",
+}
+
+LEGAL_FORMS = {
+    scoring_pb2.LEGAL_FORM_LLC: "llc",
+    scoring_pb2.LEGAL_FORM_INDIVIDUAL_ENTREPRENEUR: "ip",
+    scoring_pb2.LEGAL_FORM_JOINT_STOCK_COMPANY: "jsc",
 }
 
 REASON_IMPACTS = {
@@ -135,6 +155,10 @@ def request_to_raw_row(request: scoring_pb2.ScoreApplicationRequest) -> dict:
         "applications_last_6m": history.applications_last_6m,
         "product_type": PRODUCT_TYPES.get(application.product_type, "term_loan"),
         "purpose": PURPOSES.get(application.purpose, "other"),
+        # proto несёт сегмент и правовую форму — отдаём их модели вместо
+        # дефолтов схемы. extra_categorical_features ниже может их переопределить.
+        "company_segment": COMPANY_SEGMENTS.get(application.segment, "micro"),
+        "legal_form": LEGAL_FORMS.get(company.legal_form, "llc"),
     }
 
     unknown_numeric = sorted(
@@ -235,11 +259,36 @@ class ScoringService(scoring_pb2_grpc.ScoringServiceServicer):
 
 
 def ensure_model(model_path: Path) -> CreditScorer:
+    """Загружает модель, при её отсутствии обучает запасную на синтетике.
+
+    Запасная модель НЕ является прод-моделью: она обучена на синтетических
+    данных, а не на таблице пайплайна, поэтому её метрики несравнимы с
+    зафиксированными в артефакте. Случай используется для локальной разработки
+    и тестов, а в прод-образе артефакт кладётся при сборке (ml/Dockerfile),
+    поэтому до этой ветки дело доходить не должно.
+
+    Обучаем именно CatBoost, чтобы тип модели совпадал с прод-моделью
+    (catboost-v3): раньше здесь обучался линейный скоркард, и при пропаже
+    артефакта сервер молча начинал отдавать другую модель того же «вида»
+    на вид, но с другим поведением и без предупреждения.
+    """
     if not model_path.exists():
-        print(f"model artifact not found at {model_path}, training a new one")
-        artifact = train_model(n_samples=20_000, seed=42)
+        print(
+            f"WARNING: model artifact not found at {model_path}; "
+            "training a SYNTHETIC fallback model. This is NOT the production "
+            "model and its metrics are not comparable to the committed artifact.",
+            file=sys.stderr,
+        )
+        artifact = train_catboost_model(n_samples=20_000, seed=42)
         save_model(artifact, model_path)
-    return CreditScorer.load(model_path)
+    scorer = CreditScorer.load(model_path)
+    print(
+        f"serving model={scorer.model_version} type={scorer.model_type} "
+        f"features={len(scorer.feature_columns or [])} "
+        f"artifact={model_path}",
+        file=sys.stderr,
+    )
+    return scorer
 
 
 def create_server(scorer: CreditScorer, port: int, max_workers: int = 8) -> grpc.Server:
@@ -260,7 +309,11 @@ def create_server(scorer: CreditScorer, port: int, max_workers: int = 8) -> grpc
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="SimpleCredits scoring gRPC server")
-    parser.add_argument("--model", default=os.getenv("MODEL_PATH", str(DEFAULT_MODEL_PATH)))
+    parser.add_argument(
+        "--model",
+        default=os.getenv("MODEL_PATH", str(DEFAULT_CATBOOST_MODEL_PATH)),
+        help="path to the model artifact; defaults to MODEL_PATH env or the CatBoost model",
+    )
     parser.add_argument("--port", type=int, default=int(os.getenv("GRPC_PORT", "50051")))
     parser.add_argument("--workers", type=int, default=int(os.getenv("GRPC_WORKERS", "8")))
     args = parser.parse_args()

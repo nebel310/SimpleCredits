@@ -15,6 +15,14 @@ from schemas.applications import (
 )
 
 
+CONSENTS = {
+    "personal_data_processing": True,
+    "credit_history_request": True,
+    "version": "2026-10-25",
+    "accepted_at": "2026-10-25T10:00:00+00:00",
+}
+
+
 def make_request():
     """Возвращает валидный SScoreApplicationRequest"""
     return SScoreApplicationRequest(
@@ -78,7 +86,7 @@ def make_scoring_result(**overrides):
 
 async def test_create_persists_snapshot(test_user):
     """create сохраняет все поля заявки"""
-    app = await ApplicationRepository.create(test_user.id, make_request())
+    app = await ApplicationRepository.create(test_user.id, make_request(), consents=CONSENTS)
     assert app.application_id
     assert len(app.application_id) == 32
     assert app.user_id == test_user.id
@@ -89,11 +97,12 @@ async def test_create_persists_snapshot(test_user):
     assert app.enriched_data is None
     assert app.scoring_result is None
     assert app.explanation is None
+    assert app.consents == CONSENTS
 
 
 async def test_create_writes_event(test_user):
     """create пишет событие created"""
-    app = await ApplicationRepository.create(test_user.id, make_request())
+    app = await ApplicationRepository.create(test_user.id, make_request(), consents=CONSENTS)
     events = await ApplicationRepository.list_events(app.application_id)
     assert len(events) == 1
     assert events[0].event_type == "created"
@@ -102,14 +111,14 @@ async def test_create_writes_event(test_user):
 
 async def test_create_unique_ids(test_user):
     """Каждая заявка получает уникальный application_id"""
-    a = await ApplicationRepository.create(test_user.id, make_request())
-    b = await ApplicationRepository.create(test_user.id, make_request())
+    a = await ApplicationRepository.create(test_user.id, make_request(), consents=CONSENTS)
+    b = await ApplicationRepository.create(test_user.id, make_request(), consents=CONSENTS)
     assert a.application_id != b.application_id
 
 
 async def test_update_scoring_saves_result_and_status(test_user):
     """update_scoring сохраняет JSONB, статус и пишет два события"""
-    app = await ApplicationRepository.create(test_user.id, make_request())
+    app = await ApplicationRepository.create(test_user.id, make_request(), consents=CONSENTS)
     result = make_scoring_result(application_id=app.application_id)
 
     updated = await ApplicationRepository.update_scoring(
@@ -127,7 +136,7 @@ async def test_update_scoring_saves_result_and_status(test_user):
 
 async def test_update_scoring_with_explanation_and_enriched(test_user):
     """update_scoring сохраняет explanation и enriched_data"""
-    app = await ApplicationRepository.create(test_user.id, make_request())
+    app = await ApplicationRepository.create(test_user.id, make_request(), consents=CONSENTS)
     result = make_scoring_result()
     enriched = {"egrul": {"okved": "62.01"}}
 
@@ -145,7 +154,7 @@ async def test_update_scoring_with_explanation_and_enriched(test_user):
 
 async def test_mark_failed_sets_status_and_event(test_user):
     """mark_failed выставляет статус и пишет событие"""
-    app = await ApplicationRepository.create(test_user.id, make_request())
+    app = await ApplicationRepository.create(test_user.id, make_request(), consents=CONSENTS)
     await ApplicationRepository.mark_failed(app.application_id, "ML down")
 
     updated = await ApplicationRepository.get_by_application_id(app.application_id)
@@ -156,7 +165,7 @@ async def test_mark_failed_sets_status_and_event(test_user):
 
 async def test_add_event(test_user):
     """add_event пишет произвольное событие"""
-    app = await ApplicationRepository.create(test_user.id, make_request())
+    app = await ApplicationRepository.create(test_user.id, make_request(), consents=CONSENTS)
     await ApplicationRepository.add_event(
         app.application_id, "enriched", {"sources": ["egrul", "fns", "bki"]}
     )
@@ -178,7 +187,7 @@ async def test_list_events_empty_for_missing():
 async def test_paginated_forward_no_cursor(test_user):
     """Первая страница forward без курсора"""
     for _ in range(3):
-        await ApplicationRepository.create(test_user.id, make_request())
+        await ApplicationRepository.create(test_user.id, make_request(), consents=CONSENTS)
     apps, next_id, prev_id = await ApplicationRepository.get_user_applications_paginated(
         user_id=test_user.id, cursor_id=None, direction="forward", limit=2
     )
@@ -190,7 +199,7 @@ async def test_paginated_forward_no_cursor(test_user):
 async def test_paginated_forward_with_cursor(test_user):
     """Вторая страница forward"""
     for _ in range(3):
-        await ApplicationRepository.create(test_user.id, make_request())
+        await ApplicationRepository.create(test_user.id, make_request(), consents=CONSENTS)
     _, next_id, _ = await ApplicationRepository.get_user_applications_paginated(
         user_id=test_user.id, cursor_id=None, direction="forward", limit=2
     )
@@ -205,7 +214,7 @@ async def test_paginated_forward_with_cursor(test_user):
 async def test_paginated_backward_no_cursor(test_user):
     """Backward без курсора отдаёт последние N"""
     for _ in range(3):
-        await ApplicationRepository.create(test_user.id, make_request())
+        await ApplicationRepository.create(test_user.id, make_request(), consents=CONSENTS)
     apps, _, _ = await ApplicationRepository.get_user_applications_paginated(
         user_id=test_user.id, cursor_id=None, direction="backward", limit=2
     )
@@ -222,8 +231,8 @@ async def test_paginated_invalid_direction(test_user):
 
 async def test_paginated_filters_by_user(test_user, admin_user):
     """Возвращает только заявки пользователя"""
-    await ApplicationRepository.create(test_user.id, make_request())
-    await ApplicationRepository.create(admin_user.id, make_request())
+    await ApplicationRepository.create(test_user.id, make_request(), consents=CONSENTS)
+    await ApplicationRepository.create(admin_user.id, make_request(), consents=CONSENTS)
     apps, _, _ = await ApplicationRepository.get_user_applications_paginated(
         user_id=test_user.id, cursor_id=None, direction="forward", limit=10
     )
@@ -233,7 +242,7 @@ async def test_paginated_filters_by_user(test_user, admin_user):
 
 async def test_cascade_delete_removes_applications(test_user):
     """Удаление пользователя каскадно удаляет заявки"""
-    await ApplicationRepository.create(test_user.id, make_request())
+    await ApplicationRepository.create(test_user.id, make_request(), consents=CONSENTS)
     async with database.new_session() as session:
         user = await session.get(type(test_user), test_user.id)
         await session.delete(user)
@@ -245,7 +254,7 @@ async def test_cascade_delete_removes_applications(test_user):
 
 async def test_cascade_delete_removes_events(test_user):
     """Удаление заявки каскадно удаляет события"""
-    app = await ApplicationRepository.create(test_user.id, make_request())
+    app = await ApplicationRepository.create(test_user.id, make_request(), consents=CONSENTS)
     async with database.new_session() as session:
         record = await session.get(ApplicationOrm, app.id)
         await session.delete(record)

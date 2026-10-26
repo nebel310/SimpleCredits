@@ -22,8 +22,12 @@ from simplecredits.ml.config import (
     DEFAULT_REGISTERED_MODEL,
 )
 from simplecredits.ml.data.generator import generate_dataset
-from simplecredits.ml.data.schema import CATEGORICAL_FEATURES, TARGET_COLUMN
-from simplecredits.ml.features.features import FEATURE_COLUMNS, NUMERIC_FEATURES, build_features
+from simplecredits.ml.data.schema import (
+    CATEGORICAL_FEATURES,
+    HISTORY_NUMERIC_FEATURES,
+    TARGET_COLUMN,
+)
+from simplecredits.ml.features.features import NUMERIC_FEATURES, build_features
 from simplecredits.ml.scoring.model import pd_to_risk_grade, pd_to_score
 from simplecredits.ml.scoring.policy import (
     DECISION_APPROVE,
@@ -46,6 +50,10 @@ DECISIONS = (
     DECISION_DECLINE,
 )
 RISK_GRADES = ("A", "B", "C", "D", "E")
+LINEAR_NUMERIC_FEATURES = [
+    name for name in NUMERIC_FEATURES if name not in HISTORY_NUMERIC_FEATURES
+]
+LINEAR_FEATURE_COLUMNS = LINEAR_NUMERIC_FEATURES + CATEGORICAL_FEATURES
 
 
 def ks_statistic(y_true: np.ndarray, y_score: np.ndarray) -> float:
@@ -56,7 +64,7 @@ def ks_statistic(y_true: np.ndarray, y_score: np.ndarray) -> float:
 def build_pipeline(seed: int) -> Pipeline:
     preprocessor = ColumnTransformer(
         transformers=[
-            ("num", StandardScaler(), NUMERIC_FEATURES),
+            ("num", StandardScaler(), LINEAR_NUMERIC_FEATURES),
             (
                 "cat",
                 OneHotEncoder(handle_unknown="ignore", sparse_output=False),
@@ -132,8 +140,8 @@ def _fit_artifact(
         "model_type": "logistic_scorecard",
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "metrics": metrics,
-        "feature_columns": FEATURE_COLUMNS,
-        "numeric_features": NUMERIC_FEATURES,
+        "feature_columns": LINEAR_FEATURE_COLUMNS,
+        "numeric_features": LINEAR_NUMERIC_FEATURES,
         "categorical_features": CATEGORICAL_FEATURES,
         "training": {
             "n_samples": int(len(data)),
@@ -179,8 +187,11 @@ def build_evaluation(
     target_test: pd.Series,
 ) -> dict:
     pipeline = artifact["pipeline"]
-    train_probability = pipeline.predict_proba(features_train)[:, 1]
-    test_probability = pipeline.predict_proba(features_test)[:, 1]
+    feature_columns = artifact.get("feature_columns")
+    train_matrix = features_train[feature_columns] if feature_columns else features_train
+    test_matrix = features_test[feature_columns] if feature_columns else features_test
+    train_probability = pipeline.predict_proba(train_matrix)[:, 1]
+    test_probability = pipeline.predict_proba(test_matrix)[:, 1]
 
     train_predictions = _prediction_frame(
         data.loc[features_train.index],

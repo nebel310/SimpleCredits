@@ -229,6 +229,13 @@ export interface CreateApplicationInput {
   term_months: number;
   purpose: Purpose;
   segment: Segment;
+  consents: ApplicationConsentsInput;
+}
+
+export interface ApplicationConsentsInput {
+  personal_data_processing: boolean;
+  credit_history_request: boolean;
+  version: string;
 }
 
 export interface AppEvent {

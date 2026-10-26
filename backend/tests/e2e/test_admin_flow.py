@@ -1,5 +1,8 @@
 import pytest
 
+from ml_grpc.generated.simplecredits.scoring.v1 import scoring_pb2
+from tests.e2e.conftest import make_proto_response
+
 
 def make_profile():
     """Полный профиль компании/финансов/КИ"""
@@ -72,6 +75,11 @@ async def test_admin_login_and_list(e2e_client):
             "term_months": 24,
             "purpose": "working_capital",
             "segment": "small",
+            "consents": {
+                "personal_data_processing": True,
+                "credit_history_request": True,
+                "version": "2026-10-25",
+            },
         },
         headers=user_headers,
     )
@@ -114,3 +122,16 @@ async def test_unauthorized_returns_401(e2e_client):
     assert r1.status_code == 401
     r2 = await client.get("/admin/stats/overview")
     assert r2.status_code == 401
+
+
+async def test_regular_user_cannot_apply_manual_decision(e2e_client):
+    """Обычный пользователь не может принять решение по заявке"""
+    client, _ = e2e_client
+    token = await _register_and_login(client, "no-review@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    response = await client.post(
+        "/admin/applications/unknown/decision",
+        json={"decision": "approve"},
+        headers=headers,
+    )
+    assert response.status_code == 403

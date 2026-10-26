@@ -4,11 +4,12 @@ import { api, profileComplete, useSession, type Product, type Purpose } from '..
 import { useLiveUpdates } from '../../api/ws';
 import { useAction, useQuery } from '../../lib/hooks';
 import { loadProducts } from '../../lib/catalog';
+import { CONSENT_VERSION } from '../../lib/consents';
 import { demoByEmail } from '../../lib/demo';
 import { money, months, monthsUpTo, newKey, rate, short } from '../../lib/format';
 import { LEGAL_FORM_NAME, PURPOSE_NAME, SEGMENT_NAME, TRACK } from '../../lib/labels';
 import { annuityPayment, applicantFrom, mismatchReasons, pickProduct, type Applicant } from '../../lib/rules';
-import { Btn, ErrorState, Loading, MoneyField, PageTitle, SelectField, StatusBanner, TextField, Tracker, toast } from '../../ui/kit';
+import { Btn, Check, ErrorState, Loading, MoneyField, PageTitle, SelectField, StatusBanner, TextField, Tracker, toast } from '../../ui/kit';
 
 // Новая заявка — одна форма (USERFLOW, шаг 5). Банк сразу проверяет данные и оценивает риск.
 
@@ -29,6 +30,8 @@ export function Apply() {
   const [amount, setAmount] = useState<number | null>(preset?.requested_amount_rub ?? 1_000_000);
   const [term, setTerm] = useState<number | null>(preset?.term_months ?? 12);
   const [purpose, setPurpose] = useState<Purpose>(preset?.purpose ?? 'working_capital');
+  const [personalDataConsent, setPersonalDataConsent] = useState(false);
+  const [creditHistoryConsent, setCreditHistoryConsent] = useState(false);
   const [tried, setTried] = useState(false);
   const [step, setStep] = useState(0);
   // Ключ попытки: повтор той же заявки (двойной клик, повтор после сбоя сети) не создаст вторую
@@ -73,7 +76,8 @@ export function Apply() {
     setStep(1);
     try {
       const app = await api.createApplication(
-        { product_type: product?.product_type ?? null, requested_amount_rub: amount!, term_months: term!, purpose, segment: applicant!.segment },
+        { product_type: product?.product_type ?? null, requested_amount_rub: amount!, term_months: term!, purpose, segment: applicant!.segment,
+          consents: { personal_data_processing: personalDataConsent, credit_history_request: creditHistoryConsent, version: CONSENT_VERSION } },
         attemptKey,
       );
       setStep(4);
@@ -134,7 +138,8 @@ export function Apply() {
           ? `${lim.who} — от ${lim.tMin} до ${monthsUpTo(lim.tMax)}`
           : null,
   };
-  const valid = !err.amount && !err.term && reasons.length === 0;
+  const consentsGiven = personalDataConsent && creditHistoryConsent;
+  const valid = !err.amount && !err.term && reasons.length === 0 && consentsGiven;
   const payMin = target && amount && term ? annuityPayment(amount, target.rate_min_percent, term) : null;
   const payMax = target && amount && term ? annuityPayment(amount, target.rate_max_percent, term) : null;
 
@@ -185,6 +190,26 @@ export function Apply() {
               <b>Сегмент: {SEGMENT_NAME[segment].toLowerCase()}.</b> Его определяет банк по данным профиля: {c.employee_count} сотрудников, выручка {short(f.annual_revenue_rub)} в год. Микробизнес — до 15 сотрудников и до 120 млн ₽ выручки.
             </div>
             {product && reasons.length > 0 && <div className="warn-box">«{product.name}» не подходит под заявку: {reasons.join('; ')}.</div>}
+            <div className="panel">
+              <span style={{ fontWeight: 600, fontSize: 14 }}>Согласия</span>
+              <Check
+                checked={personalDataConsent}
+                onChange={setPersonalDataConsent}
+                label="Согласие на обработку персональных данных"
+                hint="Нужно, чтобы проверить заявку и данные компании. Согласие можно отозвать после рассмотрения."
+              />
+              <Check
+                checked={creditHistoryConsent}
+                onChange={setCreditHistoryConsent}
+                label="Согласие на запрос кредитной истории в БКИ"
+                hint="Один запрос при рассмотрении этой заявки. Без подписки и автосписаний."
+              />
+              {tried && !consentsGiven && (
+                <span className="small" style={{ color: 'var(--c-negative-ink)', fontWeight: 600 }}>
+                  Отметьте оба согласия, чтобы отправить заявку
+                </span>
+              )}
+            </div>
             {submit.error && <ErrorState error={submit.error.status === 502 || submit.error.status === 504 ? 'Сервис оценки сейчас недоступен. Попробуйте отправить ещё раз чуть позже.' : submit.error} onRetry={() => submit.run()} />}
             <div className="btn-row">
               <Btn

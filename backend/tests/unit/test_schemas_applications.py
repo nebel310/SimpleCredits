@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from schemas.applications import (
     DEFAULT_PRODUCT_TYPE,
     SApplication,
+    SApplicationConsents,
     SApplicationCreateRequest,
     SApplicationDetail,
     SApplicationEventResponse,
@@ -119,6 +120,7 @@ def make_application_orm():
         scoring_result=None,
         enriched_data=None,
         explanation=None,
+        consents=None,
     )
 
 
@@ -209,6 +211,10 @@ def test_create_request_without_profile():
         term_months=12,
         purpose="other",
         segment="micro",
+        consents=SApplicationConsents(
+            personal_data_processing=True,
+            credit_history_request=True,
+        ),
     )
     assert r.company is None
     assert r.product_type is None
@@ -225,8 +231,32 @@ def test_create_request_with_profile():
         company=make_valid_company(),
         financials=make_valid_financials(),
         credit_history=make_valid_credit_history(),
+        consents=SApplicationConsents(
+            personal_data_processing=True,
+            credit_history_request=True,
+        ),
     )
     assert r.company.inn == "7701234567"
+
+
+def test_consents_require_both_flags():
+    """Нельзя подать заявку без одного из обязательных согласий"""
+    with pytest.raises(ValidationError):
+        SApplicationConsents(
+            personal_data_processing=True,
+            credit_history_request=False,
+        )
+
+
+def test_create_request_requires_consents():
+    """SApplicationCreateRequest требует согласия"""
+    with pytest.raises(ValidationError):
+        SApplicationCreateRequest(
+            requested_amount_rub=100000,
+            term_months=12,
+            purpose="other",
+            segment="micro",
+        )
 
 
 def test_create_request_requires_purpose_and_segment():

@@ -175,6 +175,8 @@ def schema_to_proto_score_request(data, application_id):
         company=company_to_proto(data.company),
         financials=financials_to_proto(data.financials),
         credit_history=credit_history_to_proto(data.credit_history),
+        extra_numeric_features=getattr(data, "extra_numeric_features", None) or {},
+        extra_categorical_features=getattr(data, "extra_categorical_features", None) or {},
     )
 
 

@@ -7,10 +7,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from catboost import CatBoostClassifier
 from sklearn.metrics import brier_score_loss, roc_auc_score
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import GroupShuffleSplit, train_test_split
 
 from simplecredits.ml.config import (
     DEFAULT_EXPERIMENT,
@@ -21,6 +22,7 @@ from simplecredits.ml.data.schema import (
     CATEGORICAL_FEATURES,
     TARGET_COLUMN,
 )
+from simplecredits.ml.features.availability import serving_available_features
 from simplecredits.ml.features.features import (
     FEATURE_COLUMNS,
     NUMERIC_FEATURES,
@@ -29,12 +31,34 @@ from simplecredits.ml.features.features import (
 from simplecredits.ml.scoring.model import CatBoostProbabilityModel
 from simplecredits.ml.training.train import build_evaluation, ks_statistic, save_model
 
-CATBOOST_MODEL_VERSION = "catboost-v1"
+CATBOOST_MODEL_VERSION = "catboost-v4"
 DEFAULT_CATBOOST_MODEL_PATH = Path("artifacts/catboost_model.joblib")
+FEATURE_SELECTION_TOP_N = 30
+FINAL_RANDOM_STRENGTH = 5.0
+
+# Колонка группировки для сплита: одна компания не должна попадать и в train,
+# и в test, иначе модель запоминает компанию, а не сигнал.
+GROUP_COLUMN = "company_id"
+
+# Параметры подобраны на данных пайплайна raw-as-of-v4 (5356 заявок,
+# 374 дефолта, 3652 компании). Сетка depth x l2_leaf_reg x learning_rate
+# просеяна GroupKFold(5) CV с группировкой по company_id.
+#
+# Число итераций выбрано по CV-кривой AUC (100/150/200/250/300/400/600):
+# плато на 250 итерациях (CV AUC 0.7553 +- 0.0253 для полного набора).
+# Финальная модель отбирает top-30 признаков по важности селектора и
+# использует random_strength=5: GroupKFold(5) CV 0.7757 +- 0.0189,
+# grouped held-out 0.8060.
+#
+# Early stopping здесь не используется намеренно. Валидация, вырезанная из
+# train, слишком мала (~75 позитивов), из-за чего best_iteration скачет от 19
+# до 323 между сплитами и в среднем даёт 0.7620 против 0.7753 у фиксированных
+# 250 итераций (замер по 5 групповым сплитам). Фиксированное значение,
+# выбранное по CV, устойчивее. Held-out тест по 5 сидам: 0.7725 +- 0.0152.
 CATBOOST_PARAMS: dict[str, Any] = {
-    "iterations": 400,
+    "iterations": 250,
     "learning_rate": 0.03,
-    "depth": 2,
+    "depth": 3,
     "l2_leaf_reg": 10.0,
     "loss_function": "Logloss",
     "eval_metric": "AUC",
@@ -57,6 +81,26 @@ def _prepare_frame(
     return data.reset_index(drop=True)
 
 
+def _has_groups(data: pd.DataFrame) -> bool:
+    return GROUP_COLUMN in data.columns and data[GROUP_COLUMN].notna().any()
+
+
+def _grouped_indices(
+    data: pd.DataFrame,
+    seed: int,
+    test_size: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Индексы train/test так, чтобы компания целиком попадала в одну часть.
+
+    Без этого одна и та же компания оказывается и в обучении, и в контроле,
+    а метрики показывают запоминание компании вместо обобщающей способности.
+    """
+    groups = data[GROUP_COLUMN].astype(str).to_numpy()
+    splitter = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=seed)
+    train_index, test_index = next(splitter.split(data, data[TARGET_COLUMN], groups=groups))
+    return train_index, test_index
+
+
 def _split_dataset(
     data: pd.DataFrame,
     seed: int,
@@ -64,6 +108,14 @@ def _split_dataset(
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
     features = build_features(data)
     target = data[TARGET_COLUMN].astype(int)
+    if _has_groups(data):
+        train_index, test_index = _grouped_indices(data, seed, test_size)
+        return (
+            features.iloc[train_index],
+            features.iloc[test_index],
+            target.iloc[train_index],
+            target.iloc[test_index],
+        )
     return train_test_split(
         features,
         target,
@@ -87,6 +139,33 @@ def build_model(
     return CatBoostClassifier(**_resolve_params(seed, params))
 
 
+def _select_features(
+    features_train: pd.DataFrame,
+    target_train: pd.Series,
+    seed: int,
+    params: dict[str, Any] | None,
+    candidate_columns: list[str] | None = None,
+) -> list[str]:
+    """Отбирает top-N признаков по важности CatBoost.
+
+    candidate_columns ограничивает пул отбора. По умолчанию это признаки,
+    доступные в проде (см. features/availability.py): модель должна опираться
+    только на то, что backend действительно передаёт, иначе она подбирает веса
+    под значения, которые в проде всегда равны дефолту схемы.
+    """
+    selector = CatBoostClassifier(**_resolve_params(seed, params))
+    selector.fit(features_train, target_train)
+    importance = pd.Series(selector.get_feature_importance(), index=features_train.columns)
+    ranked = importance.sort_values(ascending=False)
+
+    if candidate_columns is not None:
+        allowed = set(candidate_columns) & set(features_train.columns)
+        ranked = ranked[[name for name in ranked.index if name in allowed]]
+
+    top_n = min(FEATURE_SELECTION_TOP_N, len(ranked))
+    return ranked.head(top_n).index.tolist()
+
+
 def _fit_artifact(
     data: pd.DataFrame,
     features_train: pd.DataFrame,
@@ -97,12 +176,17 @@ def _fit_artifact(
     test_size: float,
     params: dict[str, Any] | None,
 ) -> dict:
-    resolved_params = _resolve_params(seed, params)
-    model = build_model(seed, params)
-    model.fit(features_train, target_train)
+    serving_features = serving_available_features()
+    selected_features = _select_features(
+        features_train, target_train, seed, params, candidate_columns=serving_features
+    )
+    selected_categorical = [name for name in CATEGORICAL_FEATURES if name in selected_features]
+    final_params = {**(params or {}), "random_strength": FINAL_RANDOM_STRENGTH}
+    model = build_model(seed, {**final_params, "cat_features": selected_categorical})
+    model.fit(features_train[selected_features], target_train)
 
-    train_probability = model.predict_proba(features_train)[:, 1]
-    test_probability = model.predict_proba(features_test)[:, 1]
+    train_probability = model.predict_proba(features_train[selected_features])[:, 1]
+    test_probability = model.predict_proba(features_test[selected_features])[:, 1]
     test_auc = float(roc_auc_score(target_test, test_probability))
     metrics = {
         "roc_auc_train": round(float(roc_auc_score(target_train, train_probability)), 4),
@@ -112,6 +196,7 @@ def _fit_artifact(
         "brier_test": round(float(brier_score_loss(target_test, test_probability)), 4),
         "pd_mean_test": round(float(test_probability.mean()), 4),
     }
+    resolved_params = _resolve_params(seed, final_params)
 
     return {
         "model": model,
@@ -120,9 +205,9 @@ def _fit_artifact(
         "model_type": "catboost",
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "metrics": metrics,
-        "feature_columns": FEATURE_COLUMNS,
-        "numeric_features": NUMERIC_FEATURES,
-        "categorical_features": CATEGORICAL_FEATURES,
+        "feature_columns": selected_features,
+        "numeric_features": [name for name in NUMERIC_FEATURES if name in selected_features],
+        "categorical_features": selected_categorical,
         "training": {
             "n_samples": int(len(data)),
             "n_train": int(len(features_train)),
@@ -130,6 +215,18 @@ def _fit_artifact(
             "default_rate": round(float(data[TARGET_COLUMN].mean()), 4),
             "seed": seed,
             "test_size": test_size,
+            "split": "grouped_by_company" if _has_groups(data) else "stratified_random",
+            "n_companies": int(data[GROUP_COLUMN].nunique()) if _has_groups(data) else None,
+            "feature_selection": {
+                "method": "catboost_importance",
+                "top_n": FEATURE_SELECTION_TOP_N,
+                "features_total": len(FEATURE_COLUMNS),
+                # Отбор ограничен признаками, доступными в проде: иначе модель
+                # опирается на то, что backend не передаёт, и в проде деградирует.
+                "restricted_to_serving_available": True,
+                "serving_available_total": len(serving_features),
+                "selected_features": selected_features,
+            },
             "params": {
                 key: value
                 for key, value in resolved_params.items()

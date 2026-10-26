@@ -21,7 +21,7 @@ from schemas.applications import (
     application_orm_to_schema,
 )
 from schemas.auth import _build_company, _build_credit_history, _build_financials
-from services.enrichment import _credit_history_from_bki, enrich
+from services.enrichment import _credit_history_from_bki, enrich, extract_ml_extra_features
 from services.exceptions import ProductMismatchError, ProfileIncompleteError, RetryNotAllowedError
 from services.products import (
     Applicant,
@@ -226,6 +226,10 @@ class ApplicationService:
                 product_type=chosen.product_type if chosen else None,
                 product_selected_by_system=selected_by_system,
                 idempotency_key=idempotency_key,
+                consents={
+                    **create_request.consents.model_dump(),
+                    "accepted_at": datetime.now(timezone.utc).isoformat(),
+                },
             )
         except IntegrityError:
             # Запасной случай (несколько процессов бэкенда): второй запрос с тем же ключом
@@ -300,6 +304,15 @@ class ApplicationService:
             company=detail.company,
             financials=detail.financials,
             credit_history=detail.credit_history,
+        )
+        # Обогащение должно дойти до ML: без bki_credit_score модель подставляет
+        # дефолт схемы и качество падает. В БД — снимок профиля, на скоринг — копия с признаками.
+        extra_numeric, extra_categorical = extract_ml_extra_features(enriched)
+        request_for_ml = request_for_ml.model_copy(
+            update={
+                "extra_numeric_features": extra_numeric,
+                "extra_categorical_features": extra_categorical,
+            }
         )
 
         try:

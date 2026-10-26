@@ -1,4 +1,6 @@
-from simplecredits.ml.scoring.model import pd_to_risk_grade, pd_to_score
+import pytest
+
+from simplecredits.ml.scoring.model import CreditScorer, pd_to_risk_grade, pd_to_score
 
 GOOD_APPLICATION = {
     "company_age_months": 120,
@@ -92,3 +94,45 @@ def test_grade_and_score_mapping():
     assert pd_to_risk_grade(0.50) == "E"
     assert pd_to_score(0.0) == 1000
     assert pd_to_score(1.0) == 0
+
+
+@pytest.mark.parametrize(
+    ("pd_value", "grade"),
+    [
+        (0.0, "A"),
+        (0.0199, "A"),
+        (0.02, "B"),
+        (0.0499, "B"),
+        (0.05, "C"),
+        (0.0999, "C"),
+        (0.10, "D"),
+        (0.1999, "D"),
+        (0.20, "E"),
+        (2.0, "E"),
+    ],
+)
+def test_risk_grade_thresholds(pd_value, grade):
+    assert pd_to_risk_grade(pd_value) == grade
+
+
+def test_score_mapping_clamps_and_rounds():
+    assert pd_to_score(-0.5) == 1000
+    assert pd_to_score(1.5) == 0
+    assert pd_to_score(0.1234) == 877
+
+
+def test_artifact_requires_model_or_pipeline():
+    with pytest.raises(ValueError, match="either model or pipeline"):
+        CreditScorer({})
+
+
+def test_model_info_uses_artifact_defaults():
+    scorer = CreditScorer({"model": object()})
+    info = scorer.model_info()
+
+    assert info["model_version"] == "unknown"
+    assert info["model_type"] == "logistic_scorecard"
+    assert info["trained_at"] is None
+    assert info["metrics"] == {}
+    assert info["feature_columns"] == []
+    assert info["training"] == {}
