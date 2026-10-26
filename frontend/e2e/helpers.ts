@@ -31,6 +31,8 @@ export async function openLastApplication(page: Page) {
 
 /** Отправить форму новой заявки и дождаться карточки */
 export async function submitApplication(page: Page) {
+  await page.getByText('Согласие на обработку персональных данных', { exact: true }).click();
+  await page.getByText('Согласие на запрос кредитной истории в БКИ', { exact: true }).click();
   await page.getByRole('button', { name: 'Отправить заявку' }).click();
   await expect(page).toHaveURL(/#\/applications\/[0-9a-f]{32}/, { timeout: 30_000 });
 }

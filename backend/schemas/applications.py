@@ -38,6 +38,7 @@ def available_actions(status: str, outcome: str | None, has_offer: bool) -> list
     return ["accept", "reject"] if offer_ready else []
 
 DEFAULT_PRODUCT_TYPE: ProductType = "term_loan"
+CONSENT_VERSION = "2026-10-25"
 
 
 def ensure_not_future(value: datetime | None, what: str) -> None:
@@ -121,6 +122,12 @@ class SScoreApplicationRequest(BaseModel):
     company: SCompany
     financials: SFinancials
     credit_history: SCreditHistory
+    # Расширенные признаки для ML. Клиент их не заполняет — их собирает бэкенд
+    # из ответов мок-госуслуг (services.enrichment.extract_ml_extra_features).
+    # Ключи должны входить в RAW_NUMERIC_FEATURES / CATEGORICAL_FEATURES на
+    # стороне ML, иначе скоринг отклонит запрос с unknown features.
+    extra_numeric_features: dict[str, float] = Field(default_factory=dict, max_length=512)
+    extra_categorical_features: dict[str, str] = Field(default_factory=dict, max_length=512)
 
 
 class SReasonCode(BaseModel):
@@ -192,6 +199,22 @@ class SModelInfoResponse(BaseModel):
     metrics: dict[str, float] = {}
 
 
+class SApplicationConsents(BaseModel):
+    """Согласия клиента, обязательные для подачи заявки"""
+    personal_data_processing: bool
+    credit_history_request: bool
+    version: str = Field(default=CONSENT_VERSION, min_length=1, max_length=32)
+
+    @model_validator(mode="after")
+    def validate_accepted(self):
+        """Проверяет, что оба обязательных согласия предоставлены"""
+        if not self.personal_data_processing or not self.credit_history_request:
+            raise ValueError(
+                "Нужны согласия на обработку персональных данных и запрос кредитной истории"
+            )
+        return self
+
+
 class SApplicationCreateRequest(BaseModel):
     """Тело запроса на создание кредитной заявки"""
     product_type: ProductType | None = None
@@ -202,6 +225,7 @@ class SApplicationCreateRequest(BaseModel):
     company: SCompany | None = None
     financials: SFinancials | None = None
     credit_history: SCreditHistory | None = None
+    consents: SApplicationConsents
 
     @model_validator(mode="after")
     def check_dates(self):
@@ -268,6 +292,7 @@ class SApplicationDetail(BaseModel):
     scoring_result: SScoreApplicationResponse | None = None
     enriched_data: dict | None = None
     explanation: str | None = None
+    consents: dict | None = None
 
 
 class SApplicationListResponse(BaseModel):
@@ -370,4 +395,5 @@ def application_orm_to_schema(application, issued_count: int | None = None) -> S
         scoring_result=scoring_result,
         enriched_data=application.enriched_data,
         explanation=application.explanation,
+        consents=application.consents,
     )

@@ -4,8 +4,11 @@
     cd backend && uv run python ../frontend/scripts/model-check.py
 Переменные: API (по умолчанию http://localhost:3001), ADMIN_EMAIL, ADMIN_PASSWORD.
 """
-import copy, glob, json, os
+import copy, glob, json, os, sys
 import httpx
+
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
 
 def P(name, expect, why, *, form='llc', okved='62.01', region='Москва', reg='2016-05-10', emp=30,
       rev, profit, ebitda, debt, exp_m, ar, cash,
@@ -76,7 +79,7 @@ ENUM = {'PRODUCT_TYPE_TERM_LOAN': 'term_loan', 'PRODUCT_TYPE_MICROLOAN': 'microl
         'BUSINESS_SEGMENT_SMALL': 'small', 'BUSINESS_SEGMENT_MICRO': 'micro', 'LEGAL_FORM_LLC': 'llc', 'LEGAL_FORM_INDIVIDUAL_ENTREPRENEUR': 'individual_entrepreneur', 'LEGAL_FORM_JOINT_STOCK_COMPANY': 'joint_stock_company'}
 
 def from_example(path):
-    d = json.load(open(path))
+    d = json.load(open(path, encoding='utf-8'))
     d.pop('application_id', None)
     def conv(o):
         if isinstance(o, dict): return {k: conv(v) for k, v in o.items()}
@@ -89,7 +92,7 @@ def from_example(path):
 
 B = os.environ.get('API', 'http://localhost:3001')
 ADMIN = (os.environ.get('ADMIN_EMAIL', 'admin@admin.com'), os.environ.get('ADMIN_PASSWORD', 'admin'))
-c = httpx.Client(base_url=B, timeout=60)
+c = httpx.Client(base_url=B, timeout=60, trust_env=False)
 tok = c.post('/auth/login', json={'email': ADMIN[0], 'password': ADMIN[1]}).json()['access_token']
 H = {'Authorization': f'Bearer {tok}'}
 

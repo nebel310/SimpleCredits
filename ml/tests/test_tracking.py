@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 mlflow = pytest.importorskip("mlflow")
@@ -56,3 +57,16 @@ def test_training_run_logs_metrics_data_and_model(tmp_path):
         client.download_artifacts(result.run_id, "evaluation/metrics.json")
     )
     assert json.loads(metrics_path.read_text(encoding="utf-8"))["roc_auc_test"] > 0.5
+
+
+def test_registration_requires_http_tracking(tmp_path):
+    with pytest.raises(RuntimeError, match="requires an MLflow tracking server URI"):
+        log_training_run(
+            artifact={},
+            data=pd.DataFrame({"value": [1]}),
+            evaluation={},
+            model_path=tmp_path / "model.joblib",
+            params={},
+            tracking_uri=(tmp_path / "mlruns").as_uri(),
+            register_model=True,
+        )

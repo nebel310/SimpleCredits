@@ -52,6 +52,11 @@ def make_body(product_type="term_loan"):
         "term_months": 24,
         "purpose": "working_capital",
         "segment": "small",
+        "consents": {
+            "personal_data_processing": True,
+            "credit_history_request": True,
+            "version": "2026-10-25",
+        },
     }
     if product_type is not None:
         body["product_type"] = product_type

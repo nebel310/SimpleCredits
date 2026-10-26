@@ -176,6 +176,26 @@ def compute_reasons(
     return reasons
 
 
+def _cat_features_for(model, features_row: pd.DataFrame) -> list[str]:
+    """Категориальные признаки в порядке колонок features_row.
+
+    Берутся из самой модели, а не из глобальной схемы: артефакт может быть
+    обучен на более узком наборе признаков, и передача глобального списка
+    приводит к ошибке вида "'feature' is not in list".
+    """
+    try:
+        indices = model.get_cat_feature_indices()
+        names = model.feature_names_
+    except AttributeError:
+        return [c for c in CATEGORICAL_FEATURES if c in features_row.columns]
+
+    present = set(features_row.columns)
+    model_cats = {names[i] for i in indices if i < len(names)} & present
+    if model_cats:
+        return [column for column in features_row.columns if column in model_cats]
+    return [c for c in CATEGORICAL_FEATURES if c in present]
+
+
 def compute_catboost_reasons(
     model,
     features_row: pd.DataFrame,
@@ -183,7 +203,7 @@ def compute_catboost_reasons(
 ) -> list[dict]:
     from catboost import Pool
 
-    pool = Pool(features_row, cat_features=CATEGORICAL_FEATURES)
+    pool = Pool(features_row, cat_features=_cat_features_for(model, features_row))
     shap_values = model.get_feature_importance(data=pool, type="ShapValues")
     contributions = shap_values[0][:-1]
     ranked = sorted(

@@ -1,15 +1,27 @@
 from __future__ import annotations
 
+import json
 import sqlite3
+import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
 from simplecredits.ml.data.pipeline import (
     RAW_TABLES,
+    _credit_utilization,
+    _dataset_cutoff,
+    _first_numeric,
+    _latest_statement,
+    _numeric_max,
+    _statement_available_at,
+    _transaction_metrics,
+    _validate_training_frame,
     build_training_table,
     load_raw_tables,
+    main as run_pipeline_cli,
     run_pipeline,
 )
 
@@ -389,8 +401,174 @@ def test_run_pipeline_writes_csv_and_manifest(raw_db, tmp_path):
     assert output.exists()
     assert output.with_suffix(".manifest.json").exists()
     assert len(frame) == 2
-    assert report.pipeline_version == "raw-as-of-v3"
+    assert report.pipeline_version == "raw-as-of-v4"
     assert report.output_path == str(output.resolve())
     assert report.db_sha256
     assert report.observation_horizon_days == 90
     assert report.label_event_counts == {"future_bankruptcy": 1, "no_default": 1}
+
+
+def test_load_raw_tables_rejects_missing_database(tmp_path):
+    with pytest.raises(FileNotFoundError, match="raw database not found"):
+        load_raw_tables(tmp_path / "missing.db")
+
+
+def test_load_raw_tables_rejects_missing_required_tables(tmp_path):
+    db_path = tmp_path / "empty.db"
+    sqlite3.connect(db_path).close()
+
+    with pytest.raises(ValueError, match="missing raw tables"):
+        load_raw_tables(db_path)
+
+
+def test_build_training_table_requires_positive_horizon(raw_db):
+    tables = load_raw_tables(raw_db)
+
+    with pytest.raises(ValueError, match="horizon_days must be positive"):
+        build_training_table(tables, horizon_days=0)
+
+
+def test_build_training_table_requires_submitted_at(raw_db):
+    tables = load_raw_tables(raw_db)
+    tables["applications"] = tables["applications"].drop(columns=["submitted_at"])
+
+    with pytest.raises(ValueError, match="must contain submitted_at"):
+        build_training_table(tables)
+
+
+def test_build_training_table_requires_mature_rows(raw_db):
+    tables = load_raw_tables(raw_db)
+    tables["applications"]["submitted_at"] = "2027-01-01T00:00:00Z"
+
+    with pytest.raises(ValueError, match="no mature labeled applications"):
+        build_training_table(tables)
+
+
+def test_build_training_table_rejects_empty_applications(raw_db):
+    tables = load_raw_tables(raw_db)
+    tables["applications"] = tables["applications"].iloc[0:0]
+
+    with pytest.raises(ValueError, match="no valid submitted_at"):
+        build_training_table(tables)
+
+
+def test_validate_training_frame_rejects_invalid_rows(raw_db):
+    frame, _ = build_training_table(load_raw_tables(raw_db), horizon_days=90)
+    _validate_training_frame(frame)
+
+    duplicate = frame.copy()
+    duplicate.loc[duplicate.index[1], "application_id"] = duplicate.loc[duplicate.index[0], "application_id"]
+    with pytest.raises(ValueError, match="unique non-null application_id"):
+        _validate_training_frame(duplicate)
+
+    bad_target = frame.copy()
+    bad_target.loc[bad_target.index[0], "default"] = 2
+    with pytest.raises(ValueError, match="binary labels"):
+        _validate_training_frame(bad_target)
+
+    bad_event = frame.copy()
+    bad_event.loc[bad_event.index[0], "label_event"] = "unknown"
+    with pytest.raises(ValueError, match="unsupported label_event"):
+        _validate_training_frame(bad_event)
+
+    bad_date = frame.copy()
+    bad_date.loc[bad_date.index[0], "submitted_at"] = "not-a-date"
+    with pytest.raises(ValueError, match="must be valid timestamps"):
+        _validate_training_frame(bad_date)
+
+    bad_horizon = frame.copy()
+    bad_horizon.loc[bad_horizon.index[0], "label_horizon_end"] = bad_horizon.loc[bad_horizon.index[0], "submitted_at"]
+    with pytest.raises(ValueError, match="must be after submitted_at"):
+        _validate_training_frame(bad_horizon)
+
+    bad_numeric = frame.copy()
+    bad_numeric.loc[bad_numeric.index[0], "annual_revenue_rub"] = np.inf
+    with pytest.raises(ValueError, match="numeric features must be finite"):
+        _validate_training_frame(bad_numeric)
+
+    bad_positive = frame.copy()
+    positive_index = bad_positive.index[bad_positive["default"] == 1][0]
+    bad_positive.loc[positive_index, "label_event_at"] = bad_positive.loc[positive_index, "submitted_at"]
+    with pytest.raises(ValueError, match="event after submitted_at"):
+        _validate_training_frame(bad_positive)
+
+
+def test_statement_helpers_handle_missing_and_future_data():
+    as_of = pd.Timestamp("2026-01-01", tz="UTC")
+
+    assert pd.isna(_statement_available_at(pd.Series({"year": "bad", "period": "FY"})))
+    assert pd.isna(_statement_available_at(pd.Series({"year": 2025, "period": "unknown"})))
+    assert _latest_statement(pd.DataFrame(), as_of).empty
+    assert _latest_statement(pd.DataFrame({"year": [2025]}), as_of).empty
+    assert _latest_statement(
+        pd.DataFrame([{"year": 2025, "period": "FY"}]),
+        pd.Timestamp("2025-01-01", tz="UTC"),
+    ).empty
+
+
+def test_numeric_helpers_return_defaults():
+    assert _first_numeric(pd.DataFrame(), "value") == 0.0
+    assert _first_numeric(pd.DataFrame([{"value": np.nan}]), "value") == 0.0
+    assert _first_numeric(pd.DataFrame([{"value": 3.0}]), "missing") == 0.0
+    assert _numeric_max(pd.DataFrame(), "value") == 0.0
+    assert _numeric_max(pd.DataFrame([{"value": np.nan}]), "value") == 0.0
+    assert _numeric_max(pd.DataFrame([{"value": 2.0}, {"value": 5.0}]), "value") == 5.0
+
+
+def test_credit_utilization_edge_cases():
+    assert _credit_utilization(pd.DataFrame()) == 0.0
+    assert _credit_utilization(
+        pd.DataFrame([{"amount_rub": 0, "outstanding_rub": 100}])
+    ) == 0.0
+    assert _credit_utilization(
+        pd.DataFrame([{"amount_rub": 200, "outstanding_rub": 50}])
+    ) == 0.25
+
+
+def test_transaction_metrics_without_history():
+    metrics = _transaction_metrics(
+        pd.DataFrame(),
+        pd.Timestamp("2026-01-01", tz="UTC"),
+    )
+
+    assert set(metrics) == {
+        "txn_inflow_90d",
+        "txn_outflow_90d",
+        "txn_net_90d",
+        "txn_count_90d",
+        "txn_inflow_180d",
+        "txn_outflow_180d",
+        "txn_balance_latest",
+    }
+    assert all(value == 0.0 for value in metrics.values())
+
+
+def test_dataset_cutoff_defaults_to_current_time():
+    cutoff = _dataset_cutoff({})
+
+    assert cutoff.tzinfo is not None
+    assert cutoff.year >= 2026
+
+
+def test_pipeline_cli_writes_output(raw_db, tmp_path, monkeypatch, capsys):
+    output = tmp_path / "training.csv"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "simplecredits-pipeline",
+            "--db",
+            str(raw_db),
+            "--out",
+            str(output),
+            "--horizon-days",
+            "90",
+        ],
+    )
+
+    run_pipeline_cli()
+
+    report = json.loads(capsys.readouterr().out)
+    assert output.exists()
+    assert report["training_rows"] == 2
+    assert report["label_event_counts"] == {"future_bankruptcy": 1, "no_default": 1}

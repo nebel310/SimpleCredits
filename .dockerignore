@@ -4,6 +4,9 @@
 **/*.pyc
 **/.pytest_cache
 ml/artifacts/*.joblib
+# Keep the production model in the build context: ml/Dockerfile COPYs it.
+# Must come after the *.joblib exclusion above — last match wins.
+!ml/artifacts/catboost_model.joblib
 ml/data/*.csv
 mlruns/
 mlartifacts/

@@ -38,7 +38,7 @@ ML-сервис кредитного скоринга для конвейера 
                     │                     ml/                             │
                     │                                                     │
  raw SQLite ──────► │  data/pipeline.py ──► training_table.csv            │
- data/raw/*.db      │  (point-in-time, raw-as-of-v3)                      │
+  data/raw/*.db      │  (point-in-time, raw-as-of-v4)                      │
                     │        │                                            │
  generator.py ─────►│        ▼                                            │
  (synthetic)        │  features/features.py ──► обучение (train.py /      │
@@ -119,7 +119,7 @@ python -m simplecredits.ml.data.generator --out data/synthetic_applications.csv 
 
 ### Point-in-time пайплайн обучения
 
-`data/pipeline.py` (версия `raw-as-of-v3`) собирает обучающую таблицу из сырой SQLite-базы `data/raw/simplecredits_raw.db` (генерируется `tools/rawdata/generator.py` в корне репозитория):
+`data/pipeline.py` (версия `raw-as-of-v4`) собирает обучающую таблицу из сырой SQLite-базы `data/raw/simplecredits_raw.db` (генерируется `tools/rawdata/generator.py` в корне репозитория):
 
 ```bash
 python -m simplecredits.ml.data.pipeline --db data/raw/simplecredits_raw.db \
@@ -152,7 +152,7 @@ python -m simplecredits.ml.data.pipeline --db data/raw/simplecredits_raw.db \
 
 ### Линейный скоркард (LogisticRegression)
 
-`training/train.py`, версия `scorecard-linear-v1`:
+`training/train.py`, версия `scorecard-linear-v1`. Baseline: на данных пайплайна проигрывает CatBoost (0.7367 против 0.7753 AUC на одинаковых групповых сплитах), но остаётся объяснимой линейной моделью и используется как fallback, если артефакт CatBoost недоступен.
 
 - sklearn `Pipeline`: `ColumnTransformer` (StandardScaler для числовых, OneHotEncoder для категориальных) + `LogisticRegression` (`C = 0.003`, сильная L2-регуляризация — 170+ признаков при относительно небольшом числе событий легко переобучаются).
 - Метрики: ROC-AUC (train/test), Brier score, confusion matrix, кривая покрытия по риск-грейдам, распределение политических решений.
@@ -165,15 +165,53 @@ simplecredits-train --samples 20000 --seed 42 --out artifacts/model.joblib --no-
 
 ### CatBoost
 
-`training/catboost.py`, версия `catboost-v1`:
+`training/catboost.py`, версия `catboost-v4` — боевая модель.
 
-- 400 итераций, `depth = 2`, `lr = 0.03`, `l2_leaf_reg = 10` — намеренно мелкая и сильно регуляризованная модель под синтетический/малый датасет.
-- Категориальные признаки передаются нативно (`cat_features`).
-- Те же метрики, что у скоркарда; reason-коды считаются через SHAP-вклады CatBoost.
+Параметры: 250 итераций, `depth = 3`, `lr = 0.03`, `l2_leaf_reg = 10`, `random_strength = 5`. Финальная модель отбирает top-30 признаков по важности селектора CatBoost **из пула признаков, доступных в проде**. Категориальные признаки передаются нативно (`cat_features`); reason-коды считаются через SHAP-вклады CatBoost.
+
+**Ограничение отбора прод-доступными признаками** (`features/availability.py`) — ключевое свойство модели. Пайплайн строит 271 признак, но backend передаёт только 26 полей из proto и 3 из обогащения мок-госуслугами; всё остальное в проде равно дефолту схемы. Доступность выводится эмпирически: признак считается доступным, если он меняется при возмущении доступных сырых колонок. Пул — 29 признаков.
+
+Без этого ограничения модель подбирает веса под значения, которые никогда не придут. `catboost-v3` отобрал top-30 из всех 271 признаков, и 28 из них backend не отдаёт; в прод-симуляции PD схлопнулся в диапазон 0.23–0.32, **все** заявки получили грейд E и `manual_review`, ни одного `approve` — при том, что метрика обучения выглядела лучшей из всех (0.8060).
+
+| Модель | Признаков | Вне прод-пула | Прод-AUC | Грейды в прод-симуляции |
+|---|---|---|---|---|
+| v2 | 207 | 178 | 0.7625 | B 2919, C 1143, D 1156, E 138 |
+| v3 | 30 | 28 | 0.7519 | **E 5356 (100%)** |
+| **v4** | **29** | **0** | **0.7842** | A 23, B 2883, C 1352, D 1039, E 59 |
+
+У v4 прод-AUC совпадает с тестовым — расхождения train/serve нет. Инвариант проверяется при сборке образа (`scripts/verify_prod_model.py`, падает на признаке вне пула) и в `test_prod_model.py`.
+
+**Методология подбора** (зафиксирована в комментариях к `CATBOOST_PARAMS`):
+
+- **Сплит групповой по `company_id`.** Одна компания целиком попадает либо в train, либо в test. При случайном сплите 618 компаний оказывались в обеих частях, и модель запоминала компанию вместо сигнала.
+- **Сетка** `depth` × `l2_leaf_reg` × `learning_rate` просеяна GroupKFold(5) CV; оптимум — `depth=3, l2=10, lr=0.03`.
+- **Число итераций выбрано по CV-кривой** (100/150/200/250/300/400/600), плато на 250.
+- **Early stopping отключён намеренно.** Валидация, вырезанная из train, слишком мала (~75 позитивов), из-за чего `best_iteration` скачет от 19 до 323 между сплитами. Замер по 5 групповым сплитам: early stopping даёт 0.7620 против 0.7753 у фиксированных 250 итераций.
+
+**Качество на held-out групповом тесте** (1361 заявка, 101 дефолт, 0 пересекающихся компаний):
+
+| Метрика | Значение |
+|---|---|
+| ROC-AUC | 0.7763 (GroupKFold(5) CV: 0.7496 ± 0.0241) |
+| Gini | 0.5525 |
+| KS | 0.4453 |
+| Brier | 0.0643 |
+
+Метрики ниже, чем у v3 (0.8060), — и это честные цифры. v3 измерялся на признаках, которых в проде нет; v4 измеряется на тех же данных, которые получит в проде.
+
+Риск-грейды разделены и откалиброваны: A 0.0% → B 2.2% → C 9.2% → D 18.0% → E 31.8% фактических дефолтов.
+
+CatBoost выбран не произвольно: на одинаковых групповых сплитах он выигрывает у линейного скоркарда на всех 5 сидах (0.7753 против 0.7367 в среднем).
 
 ```bash
+# на данных пайплайна (путь боевой модели):
 simplecredits-catboost --data data/training_table.csv --out artifacts/catboost_model.joblib
+
+# на синтетике (сплит автоматически стратифицированный случайный — в ней нет company_id):
+simplecredits-catboost --samples 20000 --seed 42 --no-tracking
 ```
+
+Метаданные артефакта содержат `training.split` (`grouped_by_company` или `stratified_random`) и `training.n_companies`, чтобы способ обучения был воспроизводим.
 
 ### Артефакт модели
 
@@ -319,21 +357,26 @@ Env по умолчанию: `MODEL_PATH=/app/ml/artifacts/model.joblib`, `GRPC_
 
 ## Интеграция с backend
 
-- Backend (`backend/scoring/client.py`) подключается к сервису по адресу из env `SCORING_GRPC_ADDR` (по умолчанию `localhost:50051`).
-- Pydantic-схема `SScoreApplicationRequest` (`backend/schemas/scoring.py`) зеркалит proto, включая `extra_numeric_features` / `extra_categorical_features` (до 512 ключей каждое).
-- `backend/scoring/mapping.py` конвертирует HTTP-модели в proto и обратно; маппинг покрыт unit-тестами.
+- Backend подключается к сервису через `backend/ml_grpc/client.py` по адресу из env `ML_GRPC_HOST` (default `ml`), `ML_GRPC_PORT` (default `50051`), `ML_GRPC_TIMEOUT` (default `10.0`).
+- Pydantic-схема `SScoreApplicationRequest` (`backend/schemas/applications.py`) зеркалит proto, включая `extra_numeric_features` / `extra_categorical_features` (до 512 ключей каждое).
+- `backend/ml_grpc/mappers.py` конвертирует HTTP-модели в proto и обратно; `schema_to_proto_score_request` прокидывает `extra_*` map-поля в proto.
+- Обогащение через мок-госуслуги (`services/enrichment.py`) собирает расширенные признаки в `extract_ml_extra_features()`: `bki.credit_score → bki_credit_score`, `fns.tax_debt_rub → tax_debt_rub`, `fns.tax_regime → tax_regime` (с приведением словаря `УСН → usn`). Сервис заявки (`services/application.py`) подставляет их в `scoring_request` перед вызовом ML.
 
-Таким образом внешний REST-клиент отправляет заявку в backend, а backend выступает gRPC-клиентом ML-сервиса.
+Таким образом внешний REST-клиент отправляет заявку в backend, backend обогащает её через мок-ЕГРЮЛ/ФНС/БКИ и выступает gRPC-клиентом ML-сервиса.
+
+**Почему это важно для качества модели.** `bki_credit_score` — самый весомый признак catboost-v4 (57.6% важности). Если обогащение не дойдёт до ML, подставится дефолт схемы (600) и качество упадёт: прод-AUC 0.7842 → 0.7039, а распределение грейдов сместится с `B 2883, C 1352, D 1039, E 59` до `D 4657, E 618`. Поэтому обогащение обязано доходить до ML — `test_prod_model.py` и `test_enrichment_service.py::test_extract_ml_extra_features_*` это фиксируют.
+
+Прод-модель — закоммиченный артефакт `artifacts/catboost_model.joblib` (catboost-v4, 29 признаков). Он кладётся в образ при сборке (`ml/Dockerfile`), а не обучается на синтетике; сборка запускает `scripts/verify_prod_model.py` и падает, если модель опирается на признак вне прод-пула.
 
 ## Тесты
 
 ```bash
 cd ml
 pip install -e ".[dev]"
-pytest            # 30 тестов
+pytest            # 114 тестов
 ```
 
-Покрытие: генератор данных, сборка фичей (в т.ч. вырожденные знаменатели), point-in-time пайплайн (лейблы, цензурирование, манифест), обе модели обучения, политика, скоринг, маппинг proto↔row (включая отклонение неизвестных extra-признаков), MLflow-трекинг и **e2e-тест gRPC** (реальный сервер на случайном порту).
+Покрытие: генератор данных, сборка фичей (в т.ч. вырожденные знаменатели), **прод-доступность признаков и её согласованность с serving-слоем**, point-in-time пайплайн (лейблы, цензурирование, манифест), обе модели обучения, политика, скоринг, маппинг proto↔row (включая отклонение неизвестных extra-признаков), MLflow-трекинг, **контракт прод-модели** (версия, пул признаков, метрики, отсутствие признаков вне пула, защита от коллапса PD) и **e2e-тест gRPC** (реальный сервер на случайном порту).
 
 ## CLI-команды
 
@@ -352,8 +395,10 @@ pytest            # 30 тестов
 
 | Переменная | По умолчанию | Где используется |
 |---|---|---|
-| `MODEL_PATH` | `artifacts/model.joblib` | serving: путь к артефакту модели |
+| `MODEL_PATH` | `artifacts/catboost_model.joblib` | serving: путь к артефакту модели |
 | `GRPC_PORT` | `50051` | serving: порт gRPC |
 | `GRPC_WORKERS` | `8` | serving: размер thread pool |
 | `MLFLOW_TRACKING_URI` | `./mlruns` | training/tracking: адрес MLflow |
-| `SCORING_GRPC_ADDR` | `localhost:50051` | backend: адрес ML-сервиса |
+| `ML_GRPC_HOST` | `ml` | backend: хост ML-сервиса |
+| `ML_GRPC_PORT` | `50051` | backend: порт ML-сервиса |
+| `ML_GRPC_TIMEOUT` | `10.0` | backend: таймаут gRPC-вызова, сек |

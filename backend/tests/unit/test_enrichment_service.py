@@ -80,3 +80,65 @@ async def test_enrich_serializes_to_dict(monkeypatch):
     result = await enrich("7701234567")
     import json
     json.dumps(result)  # не должно кидать
+
+def test_extract_ml_extra_features_maps_bki_and_fns():
+    """credit_score, tax_debt_rub и tax_regime доходят до extra_*_features"""
+    from services.enrichment import extract_ml_extra_features
+
+    enriched = {
+        "egrul": {"inn": "7701234567"},
+        "fns": {"tax_regime": "УСН", "tax_debt_rub": 15000},
+        "bki": {"credit_score": 742},
+    }
+
+    numeric, categorical = extract_ml_extra_features(enriched)
+
+    assert numeric["bki_credit_score"] == 742.0
+    assert numeric["tax_debt_rub"] == 15000.0
+    assert categorical["tax_regime"] == "usn"
+
+
+def test_extract_ml_extra_features_normalizes_all_tax_regimes():
+    """Кириллические режимы ФНС приводятся к слагам ML"""
+    from services.enrichment import TAX_REGIME_TO_ML, extract_ml_extra_features
+
+    for raw, slug in TAX_REGIME_TO_ML.items():
+        _, categorical = extract_ml_extra_features({"fns": {"tax_regime": raw}})
+        assert categorical["tax_regime"] == slug
+
+
+def test_extract_ml_extra_features_tolerates_missing_sources():
+    """Упавший источник (None) не ломает извлечение"""
+    from services.enrichment import extract_ml_extra_features
+
+    numeric, categorical = extract_ml_extra_features(
+        {"egrul": None, "fns": None, "bki": None}
+    )
+
+    assert numeric == {}
+    assert categorical == {}
+
+
+def test_extract_ml_extra_features_skips_unsafe_fields():
+    """Поля вне распределения обучения намеренно не отдаются"""
+    from services.enrichment import extract_ml_extra_features
+
+    enriched = {
+        "fns": {
+            "mass_address": True,
+            "mass_director": True,
+            "disqualified_persons": True,
+            "reliability_score": 95,
+            "tax_debt_rub": 0,
+        },
+        "bki": {"credit_score": 800},
+    }
+
+    numeric, categorical = extract_ml_extra_features(enriched)
+
+    # mass_* константны в обучении, reliability_score — другая шкала
+    assert "mass_address_flag" not in numeric
+    assert "mass_manager_flag" not in numeric
+    assert "disqualified_manager_flag" not in numeric
+    assert "reputation_rating" not in numeric
+    assert set(numeric) == {"bki_credit_score", "tax_debt_rub"}

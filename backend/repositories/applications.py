@@ -17,10 +17,9 @@ class ApplicationRepository:
         user_id: int,
         data: SScoreApplicationRequest,
         product_type: str | None = None,
-        product_selected_by_system: bool = False,
-        idempotency_key: str | None = None,
+        consents: dict | None = None,
     ) -> ApplicationOrm:
-        """Создаёт заявку со снимком профиля и пишет событие created"""
+        """Создаёт заявку со снимком профиля и согласий и пишет событие created"""
         application_id = uuid.uuid4().hex
         now = datetime.now(timezone.utc)
         actual_product_type = product_type if product_type is not None else data.application.product_type
@@ -66,6 +65,7 @@ class ApplicationRepository:
                 credit_utilization=data.credit_history.credit_utilization,
                 closed_obligations_count=data.credit_history.closed_obligations_count,
                 applications_last_6m=data.credit_history.applications_last_6m,
+                consents=consents,
                 created_at=now,
                 updated_at=now,
             )
@@ -139,134 +139,37 @@ class ApplicationRepository:
         return await cls.get_by_application_id(application_id)
 
     @classmethod
-    async def transition(
+    async def set_manual_decision(
         cls,
         application_id: str,
-        from_statuses: tuple[str, ...],
-        to_status: str,
-        event_type: str,
-        payload: dict | None = None,
-        values: dict | None = None,
+        status: str,
+        admin_id: int,
+        comment: str | None = None,
     ) -> ApplicationOrm | None:
-        """
-        Переводит заявку в новый статус, только если сейчас она в одном из from_statuses.
-        Проверка и запись — одним UPDATE, поэтому два одновременных запроса не пройдут оба.
-        Пишет событие. Возвращает обновлённую заявку или None, если статус уже другой.
-        """
+        """Сохраняет ручное решение банка и пишет событие manual_decision"""
         now = datetime.now(timezone.utc)
+
         async with new_session() as session:
-            result = await session.execute(
+            await session.execute(
                 update(ApplicationOrm)
-                .where(
-                    ApplicationOrm.application_id == application_id,
-                    ApplicationOrm.status.in_(from_statuses),
-                )
-                .values(status=to_status, updated_at=now, **(values or {}))
+                .where(ApplicationOrm.application_id == application_id)
+                .values(status=status, updated_at=now)
             )
-            if result.rowcount != 1:
-                await session.rollback()
-                return None
             session.add(
                 ApplicationEventOrm(
                     application_id=application_id,
-                    event_type=event_type,
-                    payload={"status": to_status, **(payload or {})},
+                    event_type="manual_decision",
+                    payload={
+                        "status": status,
+                        "admin_id": admin_id,
+                        "comment": comment,
+                    },
                     created_at=now,
                 )
             )
             await session.commit()
+
         return await cls.get_by_application_id(application_id)
-
-    @classmethod
-    async def get_by_idempotency_key(cls, user_id: int, key: str) -> ApplicationOrm | None:
-        """Заявка пользователя, созданная с этим ключом идемпотентности"""
-        async with new_session() as session:
-            query = select(ApplicationOrm).where(
-                ApplicationOrm.user_id == user_id, ApplicationOrm.idempotency_key == key
-            )
-            return (await session.execute(query)).scalars().first()
-
-    @classmethod
-    async def list_issued_offers(cls, inn: str, exclude_application_id: str | None = None) -> list[dict]:
-        """
-        Условия кредитов, которые банк уже выдал компании (статус issued). Заёмщик — компания,
-        поэтому считаем по ИНН: второй аккаунт с тем же ИНН не начинает с чистого листа.
-        """
-        async with new_session() as session:
-            query = select(ApplicationOrm.offer).where(
-                ApplicationOrm.inn == inn,
-                ApplicationOrm.status == "issued",
-            )
-            if exclude_application_id:
-                query = query.where(ApplicationOrm.application_id != exclude_application_id)
-            offers = (await session.execute(query)).scalars().all()
-        return [offer for offer in offers if offer]
-
-    @classmethod
-    async def count_issued(cls, inns: list[str]) -> dict[str, int]:
-        """Сколько кредитов банк оформил каждой из компаний (по ИНН, статус issued)"""
-        if not inns:
-            return {}
-        async with new_session() as session:
-            rows = (await session.execute(
-                select(ApplicationOrm.inn, func.count())
-                .where(ApplicationOrm.inn.in_(set(inns)), ApplicationOrm.status == "issued")
-                .group_by(ApplicationOrm.inn)
-            )).all()
-        counts = {inn: 0 for inn in inns}
-        counts.update({inn: n for inn, n in rows})
-        return counts
-
-    @classmethod
-    async def update_enriched(cls, application_id: str, enriched_data: dict) -> None:
-        """Перезаписывает enriched_data без события (дополнение к уже сохранённым ответам источников)"""
-        async with new_session() as session:
-            await session.execute(
-                update(ApplicationOrm)
-                .where(ApplicationOrm.application_id == application_id)
-                .values(enriched_data=enriched_data)
-            )
-            await session.commit()
-
-    @classmethod
-    async def save_credit_history(cls, application_id: str, credit_history: SCreditHistory) -> ApplicationOrm | None:
-        """Перезаписывает кредитную историю в снимке заявки (данные БКИ на момент проверки)"""
-        async with new_session() as session:
-            await session.execute(
-                update(ApplicationOrm)
-                .where(ApplicationOrm.application_id == application_id)
-                .values(**credit_history.model_dump(), updated_at=datetime.now(timezone.utc))
-            )
-            await session.commit()
-        return await cls.get_by_application_id(application_id)
-
-    @classmethod
-    async def backfill_outcomes(cls) -> int:
-        """
-        Заявки «different», созданные до появления поля outcome, получают тип результата
-        по решению модели — чтобы попасть в очередь ручной проверки и в статистику.
-        Трогает только строки, где outcome ещё пустой. Возвращает число обновлённых.
-        """
-        mapping = {
-            "manual_review": "MANUAL_REVIEW",
-            "approve_with_conditions": "COUNTER_OFFER",
-            "approve": "ALTERNATIVE_PRODUCT",
-        }
-        updated = 0
-        async with new_session() as session:
-            rows = (await session.execute(
-                select(ApplicationOrm).where(
-                    ApplicationOrm.status == "different",
-                    ApplicationOrm.outcome.is_(None),
-                )
-            )).scalars().all()
-            for row in rows:
-                decision = ((row.scoring_result or {}).get("decision") or {}).get("decision")
-                if decision in mapping:
-                    row.outcome = mapping[decision]
-                    updated += 1
-            await session.commit()
-        return updated
 
     @classmethod
     async def mark_failed(cls, application_id: str, reason: str | None = None) -> None:

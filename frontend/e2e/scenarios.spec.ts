@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { DEMO, demoLogin, freshClientLikeA, logout, openLastApplication, submitApplication } from './helpers';
+import { DEMO, demoLogin, logout, submitApplication } from './helpers';
 
 // Пять демо-компаний — пять разных исходов: одобрение с оформлением, другие условия,
 // ручная проверка с решением банка, подбор продукта банком и отказ
@@ -74,6 +74,20 @@ test('C — ручная проверка: не оффер, решение пр�
   await expect(page.getByRole('heading', { name: 'Предлагаем другие условия' })).toBeVisible();
   await expect(page.getByText('Одобряем лимит поменьше — с учётом текущей нагрузки')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Принять предложение' })).toBeVisible();
+});
+
+test('C — банк принимает ручное решение по заявке', async ({ page }) => {
+  await demoLogin(page, DEMO.c);
+  await page.goto('./#/apply');
+  await submitApplication(page);
+  const clientUrl = page.url();
+  await logout(page);
+  await demoLogin(page, DEMO.bank);
+  await page.goto(clientUrl.replace('#/applications/', '#/bank/applications/'));
+  await expect(page.getByRole('heading', { name: 'Ручное решение' })).toBeVisible();
+  await page.getByRole('button', { name: 'Одобрить вручную' }).click();
+  await expect(page.getByRole('heading', { name: 'Заявка одобрена' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Ручное решение' })).toHaveCount(0);
 });
 
 test('D — продукт не выбран, банк подобрал сам', async ({ page }) => {

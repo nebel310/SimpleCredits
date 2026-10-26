@@ -90,7 +90,7 @@ Columns:
 
 `training_table.manifest.json` contains:
 
-- `pipeline_version` (currently `raw-as-of-v3`)
+- `pipeline_version` (currently `raw-as-of-v4`)
 - `db_path`, `db_sha256`
 - `total_applications`, `eligible_applications`, `censored_applications`
 - `positive_labels`, `negative_labels`, `default_rate`

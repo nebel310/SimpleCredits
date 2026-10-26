@@ -211,7 +211,74 @@ NEW_NUMERIC_FEATURES = [
     "applicant_biometric_liveness_score",
 ]
 
-RAW_NUMERIC_FEATURES = BASE_NUMERIC_FEATURES + NEW_NUMERIC_FEATURES
+HISTORY_NUMERIC_FEATURES = [
+    "bki_hist_score_mean",
+    "bki_hist_score_std",
+    "bki_hist_score_min",
+    "bki_hist_score_max",
+    "bki_hist_n",
+    "bki_hist_trend",
+    "bki_hist_delta",
+    "bki_hist_last_age",
+    "bki_adj",
+    "bki_adj_mean",
+    "bki_last_restructures_count",
+    "stmt_gross_mean",
+    "stmt_gross_std",
+    "stmt_gross_min",
+    "stmt_gross_max",
+    "stmt_gross_last",
+    "stmt_opex_mean",
+    "stmt_opex_std",
+    "stmt_opex_min",
+    "stmt_opex_max",
+    "stmt_opex_last",
+    "stmt_equity_mean",
+    "stmt_equity_std",
+    "stmt_equity_min",
+    "stmt_equity_max",
+    "stmt_equity_last",
+    "stmt_net_mean",
+    "stmt_net_std",
+    "stmt_net_min",
+    "stmt_net_max",
+    "stmt_net_last",
+    "stmt_debt_mean",
+    "stmt_debt_std",
+    "stmt_debt_min",
+    "stmt_debt_max",
+    "stmt_debt_last",
+    "stmt_n",
+    "stmt_quality",
+    "mgmt_margin_mean",
+    "mgmt_margin_std",
+    "mgmt_margin_min",
+    "mgmt_margin_max",
+    "mgmt_margin_last",
+    "mgmt_n",
+    "mgmt_cash_to_revenue",
+    "mgmt_payable_to_revenue",
+    "mgmt_margin_trend",
+    "acct_margin_mean",
+    "acct_margin_std",
+    "acct_margin_min",
+    "acct_margin_max",
+    "acct_margin_last",
+    "acct_n",
+    "acct_expense_to_revenue",
+    "acct_negative_share",
+    "acct_margin_trend",
+    "util_debt_mean",
+    "util_debt_std",
+    "util_debt_min",
+    "util_debt_max",
+    "util_debt_last",
+    "util_n",
+    "util_debt_months",
+    "hr_n",
+]
+
+RAW_NUMERIC_FEATURES = BASE_NUMERIC_FEATURES + NEW_NUMERIC_FEATURES + HISTORY_NUMERIC_FEATURES
 
 CATEGORICAL_FEATURES = [
     "product_type",
@@ -233,6 +300,27 @@ FINANCING_PURPOSES = [
     "refinancing",
     "other",
 ]
+
+# Допустимые значения остальных категориальных признаков. Совпадают со
+# словарями обучающей таблицы пайплайна и с маппингом enum'ов proto в
+# serving/server.py (COMPANY_SEGMENTS, LEGAL_FORMS).
+SEGMENTS = ["micro", "small"]
+
+LEGAL_FORMS = ["llc", "ip", "jsc"]
+
+TAX_REGIMES = ["usn", "osn", "patent", "eshn"]
+
+CLIENT_RATINGS = ["A", "B", "C", "D", "E"]
+
+# Словарь значений для каждого категориального признака.
+CATEGORICAL_VOCABULARIES: dict[str, list[str]] = {
+    "product_type": PRODUCT_TYPES,
+    "purpose": FINANCING_PURPOSES,
+    "company_segment": SEGMENTS,
+    "legal_form": LEGAL_FORMS,
+    "tax_regime": TAX_REGIMES,
+    "client_rating": CLIENT_RATINGS,
+}
 
 BASE_DEFAULTS: dict[str, Any] = {
     "company_age_months": 36,
@@ -277,7 +365,9 @@ BASE_DEFAULTS: dict[str, Any] = {
     "txn_balance_latest": 400_000,
 }
 
-NEW_DEFAULTS: dict[str, float] = {name: 0.0 for name in NEW_NUMERIC_FEATURES}
+NEW_DEFAULTS: dict[str, float] = {
+    name: 0.0 for name in NEW_NUMERIC_FEATURES + HISTORY_NUMERIC_FEATURES
+}
 NEW_DEFAULTS.update(
     {
         "user_count": 2,

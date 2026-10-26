@@ -21,12 +21,10 @@ test('профиль: проверки полей, подстановка из �
   // кредитную историю не вводят руками — без запроса в БКИ профиль не сохранить
   await expect(page.getByText('Запросите кредитную историю в БКИ').first()).toBeVisible();
   await fillProfile(page);
-  // после первого сохранения — сразу к заявке
-  await page.getByRole('button', { name: 'Подать заявку' }).click();
-  await expect(page).toHaveURL(/#\/apply/);
-  // в форме заявки — данные компании из профиля и сегмент, который определил банк
-  await expect(page.getByText('Данные компании')).toBeVisible();
-  await expect(page.getByText(/^Сегмент: /)).toBeVisible();
+  // в форме заявки — данные компании из профиля
+  await page.goto('./#/apply');
+  await expect(page.getByRole('heading', { name: 'Данные компании' })).toBeVisible();
+  await page.locator('.choice', { hasText: 'Микрозайм' }).click();
   await page.getByLabel('Сумма').fill('900000');
   await submitApplication(page);
   await expect(page.locator('.banner h2')).toBeVisible();

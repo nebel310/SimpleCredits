@@ -21,20 +21,8 @@ from schemas.applications import (
     application_orm_to_schema,
 )
 from schemas.auth import _build_company, _build_credit_history, _build_financials
-from services.enrichment import _credit_history_from_bki, enrich
-from services.exceptions import ProductMismatchError, ProfileIncompleteError, RetryNotAllowedError
-from services.products import (
-    Applicant,
-    build_offer,
-    company_age_months,
-    derive_segment,
-    mismatch_reasons,
-    no_product_explanation,
-    pick_product,
-    with_amount,
-)
-from services.deal import notify_status
-from services.explain import FAILED_EXPLANATION, build_explanation
+from services.enrichment import enrich, extract_ml_extra_features
+from services.exceptions import ManualDecisionNotAllowedError, ProfileIncompleteError
 from services.scoring import decision_to_status
 from services.ws_manager import ws_manager
 
@@ -236,20 +224,14 @@ class ApplicationService:
             return existing, False
         return application, True
 
-    @classmethod
-    async def retry(cls, application: ApplicationOrm, client: ScoringClient) -> ApplicationOrm:
-        """
-        Повторяет проверку заявки после технической ошибки (failed): та же заявка,
-        новая попытка обогащения и скоринга. Два повтора одновременно не запустятся:
-        перевод failed → pending делается одним UPDATE.
-        """
-        if application.status != "failed":
-            raise RetryNotAllowedError("Повторить можно только проверку, которая завершилась ошибкой")
-        restarted = await ApplicationRepository.transition(
-            application.application_id,
-            from_statuses=("failed",),
-            to_status="pending",
-            event_type="retry_started",
+        application = await ApplicationRepository.create(
+            user_id=refreshed.id,
+            data=request_for_ml,
+            product_type=create_request.product_type,
+            consents={
+                **create_request.consents.model_dump(),
+                "accepted_at": datetime.now(timezone.utc).isoformat(),
+            },
         )
         if restarted is None:
             raise RetryNotAllowedError("Проверка уже запущена — обновите страницу")
@@ -264,23 +246,16 @@ class ApplicationService:
         enriched = await enrich(application.inn)
         await ApplicationRepository.save_enriched(application.application_id, enriched)
 
-        # Кредитную историю действующего клиента банк берёт из БКИ (USERFLOW §6, п. 5).
-        # Снимок заявки обновляется, чтобы модель, карточка и блок БКИ показывали одно и то же.
-        # Если БКИ не ответил — берётся история из профиля.
-        # К истории добавляются кредиты, которые наш банк уже выдал этому клиенту.
-        bki_history = _credit_history_from_bki(enriched)
-        own_offers = await ApplicationRepository.list_issued_offers(
-            application.inn, exclude_application_id=application.application_id
+        # Обогащение должно дойти до ML: без bki_credit_score модель подставляет
+        # дефолт схемы и качество падает с AUC ~0.76 до ~0.55. Заявка в БД хранит
+        # снапшот профиля (request_for_ml), а на скоринг уходит копия с признаками.
+        extra_numeric, extra_categorical = extract_ml_extra_features(enriched)
+        scoring_request = request_for_ml.model_copy(
+            update={
+                "extra_numeric_features": extra_numeric,
+                "extra_categorical_features": extra_categorical,
+            }
         )
-        base_history = bki_history
-        if base_history is None and own_offers:
-            user = await UserRepository.get_user_by_id(application.user_id)
-            base_history = (_build_credit_history(user) if user else None) or application_orm_to_schema(application).credit_history
-        if base_history is not None:
-            history, bank_credits = add_bank_credits(base_history, own_offers)
-            if bank_credits:
-                await ApplicationRepository.update_enriched(application.application_id, {**enriched, "bank_credits": bank_credits})
-            application = await ApplicationRepository.save_credit_history(application.application_id, history) or application
 
         sources = [k for k, v in enriched.items() if v is not None]
         await ws_manager.broadcast(
@@ -303,7 +278,9 @@ class ApplicationService:
         )
 
         try:
-            proto_request = schema_to_proto_score_request(request_for_ml, application.application_id)
+            proto_request = schema_to_proto_score_request(
+                scoring_request, application.application_id
+            )
             proto_response = await client.score_application(proto_request)
         except GrpcServiceError as exc:
             # Заявка уже сохранена: номер нужен фронту, чтобы показать её, а не просить подать заново
@@ -339,6 +316,49 @@ class ApplicationService:
 
         await notify_status(updated or application)
         return updated or application
+
+    @classmethod
+    async def decide_manually(
+        cls,
+        application_id: str,
+        decision: str,
+        admin_id: int,
+        comment: str | None = None,
+    ) -> ApplicationOrm:
+        """Применяет ручное решение банка к заявке из серой зоны"""
+        application = await ApplicationRepository.get_by_application_id(application_id)
+        if application is None:
+            raise ValueError("Заявка не найдена")
+
+        scoring = application.scoring_result or {}
+        model_decision = (scoring.get("decision") or {}).get("decision")
+        if application.status != "different" or model_decision != "manual_review":
+            raise ManualDecisionNotAllowedError(
+                "Ручное решение доступно только для заявки в статусе ручной проверки"
+            )
+
+        new_status = "confirmed" if decision == "approve" else "declined"
+        updated = await ApplicationRepository.set_manual_decision(
+            application_id=application_id,
+            status=new_status,
+            admin_id=admin_id,
+            comment=comment,
+        )
+        if updated is None:
+            raise ValueError("Заявка не найдена")
+
+        await ws_manager.broadcast(
+            application.user_id,
+            {
+                "type": "status_changed",
+                "application_id": application_id,
+                "status": new_status,
+                "payload": {"manual_decision": decision, "admin_id": admin_id},
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+        return updated
 
     @classmethod
     async def _maybe_update_profile(

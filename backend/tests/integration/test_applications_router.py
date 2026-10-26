@@ -147,6 +147,11 @@ def make_body(product_type: str | None = "term_loan"):
         "term_months": 24,
         "purpose": "working_capital",
         "segment": "small",
+        "consents": {
+            "personal_data_processing": True,
+            "credit_history_request": True,
+            "version": "2026-10-25",
+        },
     }
     if product_type is not None:
         body["product_type"] = product_type
@@ -233,6 +238,33 @@ async def test_create_invalid_body(auth_client):
     """Невалидное тело → 422"""
     r = await auth_client.post("/applications", json={})
     assert r.status_code == 422
+
+
+async def test_create_requires_consents(auth_client):
+    """Без согласий → 422"""
+    body = make_body()
+    body.pop("consents")
+    r = await auth_client.post("/applications", json=body)
+    assert r.status_code == 422
+
+
+async def test_create_rejects_partial_consents(auth_client):
+    """Если одно из согласий не предоставлено → 422"""
+    body = make_body()
+    body["consents"]["credit_history_request"] = False
+    r = await auth_client.post("/applications", json=body)
+    assert r.status_code == 422
+
+
+async def test_create_persists_consents_with_timestamp(auth_client):
+    """Сохраняет согласия и серверное время принятия"""
+    r = await auth_client.post("/applications", json=make_body())
+    assert r.status_code == 201
+    consents = r.json()["consents"]
+    assert consents["personal_data_processing"] is True
+    assert consents["credit_history_request"] is True
+    assert consents["version"] == "2026-10-25"
+    assert consents["accepted_at"]
 
 
 async def test_create_unauthorized(unauth_client):
