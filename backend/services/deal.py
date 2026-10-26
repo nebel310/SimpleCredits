@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 from models.applications import ApplicationOrm
 from repositories.applications import ApplicationRepository
-from schemas.applications import ACCEPTABLE_OUTCOMES, available_actions  # noqa: F401
+from schemas.applications import ACCEPTABLE_OUTCOMES, available_actions, application_orm_to_schema, is_offer_outdated  # noqa: F401
 from services.ws_manager import ws_manager
 
 WHY_NOT = {
@@ -18,6 +18,30 @@ WHY_NOT = {
     "issued": "Кредит уже оформлен",
     "rejected_by_client": "Вы отказались от этого предложения — подайте новую заявку",
 }
+
+
+OUTDATED_OFFER = (
+    "После этого решения вам оформлен другой кредит — нагрузка изменилась, и условия больше не действуют. "
+    "Подайте новую заявку: банк оценит её с учётом всех кредитов."
+)
+
+
+async def offer_outdated(application: ApplicationOrm) -> bool:
+    """Предложение посчитано без кредита, который клиенту оформили позже"""
+    counts = await ApplicationRepository.count_issued([application.inn])
+    return is_offer_outdated(application, counts.get(application.inn, 0))
+
+
+async def detail(application: ApplicationOrm):
+    """Ответ API по заявке — с учётом кредитов, оформленных клиенту после её оценки"""
+    counts = await ApplicationRepository.count_issued([application.inn])
+    return application_orm_to_schema(application, counts.get(application.inn, 0))
+
+
+async def details(applications: list[ApplicationOrm]) -> list:
+    """То же для списка заявок: число оформленных кредитов считается одним запросом"""
+    counts = await ApplicationRepository.count_issued([a.inn for a in applications])
+    return [application_orm_to_schema(a, counts.get(a.inn, 0)) for a in applications]
 
 
 class DealError(Exception):
@@ -68,6 +92,8 @@ async def accept_offer(application: ApplicationOrm) -> ApplicationOrm:
     """Клиент принимает предложение банка (одобрение, другой продукт или другие условия)"""
     if not _has_offer_to_accept(application):
         raise DealError(_why_not(application))
+    if await offer_outdated(application):
+        raise DealError(OUTDATED_OFFER)
     updated = await ApplicationRepository.transition(
         application.application_id,
         from_statuses=(application.status,),
@@ -87,6 +113,8 @@ async def issue_credit(application: ApplicationOrm) -> ApplicationOrm:
         raise DealError(
             "Сначала примите предложение" if _has_offer_to_accept(application) else _why_not(application)
         )
+    if await offer_outdated(application):
+        raise DealError(OUTDATED_OFFER)
     now = datetime.now(timezone.utc)
     contract_number = f"SC-{now:%Y%m%d}-{application.application_id[:6].upper()}"
     offer = application.offer or {}

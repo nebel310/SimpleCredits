@@ -15,7 +15,6 @@ from schemas.applications import (
     SApplicationDetail,
     SApplicationEventResponse,
     SApplicationListResponse,
-    application_orm_to_schema,
 )
 from schemas.base import ErrorResponse, ValidationErrorResponse
 from services import deal
@@ -94,7 +93,7 @@ async def create_application(
     except GrpcServiceError as exc:
         return _grpc_error_response(exc)
 
-    return application_orm_to_schema(application)
+    return await deal.detail(application)
 
 
 @router.get(
@@ -134,7 +133,7 @@ async def list_applications(
         raise HTTPException(status_code=400, detail=str(exc))
 
     return SApplicationListResponse(
-        applications=[application_orm_to_schema(a) for a in applications],
+        applications=await deal.details(applications),
         next_cursor=encode_cursor(next_id) if next_id else None,
         previous_cursor=encode_cursor(prev_id) if prev_id else None,
     )
@@ -159,7 +158,7 @@ async def get_application(
         raise HTTPException(status_code=404, detail="Заявка не найдена")
     if application.user_id != current_user.id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Недостаточно прав")
-    return application_orm_to_schema(application)
+    return await deal.detail(application)
 
 
 @router.get(
@@ -208,7 +207,7 @@ async def accept_application_offer(application_id: str, current_user: UserOrm = 
     """Принять предложение банка: одобрение, подобранный продукт или другие условия → статус accepted"""
     application = await _own_application(application_id, current_user)
     try:
-        return application_orm_to_schema(await deal.accept_offer(application))
+        return await deal.detail(await deal.accept_offer(application))
     except deal.DealError as exc:
         raise HTTPException(status_code=409, detail=exc.message)
 
@@ -218,7 +217,7 @@ async def issue_application_credit(application_id: str, current_user: UserOrm = 
     """Подтвердить условия и оформить: номер модельного договора, синтетическая выдача → статус issued"""
     application = await _own_application(application_id, current_user)
     try:
-        return application_orm_to_schema(await deal.issue_credit(application))
+        return await deal.detail(await deal.issue_credit(application))
     except deal.DealError as exc:
         raise HTTPException(status_code=409, detail=exc.message)
 
@@ -228,7 +227,7 @@ async def reject_application_offer(application_id: str, current_user: UserOrm = 
     """Отказаться от предложения до оформления → статус rejected_by_client"""
     application = await _own_application(application_id, current_user)
     try:
-        return application_orm_to_schema(await deal.reject_offer(application))
+        return await deal.detail(await deal.reject_offer(application))
     except deal.DealError as exc:
         raise HTTPException(status_code=409, detail=exc.message)
 
@@ -246,7 +245,7 @@ async def retry_application(
     """Повторить проверку после технической ошибки (статус failed). Новая заявка не создаётся"""
     application = await _own_application(application_id, current_user)
     try:
-        return application_orm_to_schema(await ApplicationService.retry(application, client))
+        return await deal.detail(await ApplicationService.retry(application, client))
     except RetryNotAllowedError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     except GrpcServiceError as exc:

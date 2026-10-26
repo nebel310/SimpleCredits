@@ -59,3 +59,15 @@ async def test_application_zero_amount_rejected(e2e_client):
     body["requested_amount_rub"] = 0
     r = await client.post("/applications", json=body, headers=headers)
     assert r.status_code == 422
+
+
+async def test_financials_must_be_consistent(e2e_client):
+    """Месячная выручка, прибыль и EBITDA не больше годовой выручки — иначе правила нагрузки обходятся"""
+    from tests.e2e.test_full_flow import _setup_full_profile, make_profile
+    client, _ = e2e_client
+    headers = await _setup_full_profile(client, "consistent@example.com")
+    fin = make_profile()["financials"]
+    for field, text in [("monthly_revenue_rub", "Выручка в месяц"), ("annual_net_profit_rub", "Чистая прибыль"), ("ebitda_rub", "EBITDA")]:
+        bad = {**fin, field: fin["annual_revenue_rub"] + 1}
+        r = await client.patch("/auth/me", json={"financials": bad}, headers=headers)
+        assert r.status_code == 422 and text in str(r.json()["detail"])

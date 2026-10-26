@@ -56,10 +56,12 @@ async def test_issued_credit_counts_in_next_application(e2e_client):
     assert d["enriched_data"]["bki"]["monthly_debt_payments_rub"] == bki.monthly_debt_payments_rub
 
 
-async def test_not_issued_and_other_clients_credits_do_not_count(e2e_client):
+async def test_not_issued_and_other_companies_credits_do_not_count(e2e_client):
     client, servicer = e2e_client
     seen = _recording(servicer)
     other = await _setup_full_profile(client, "other-client@example.com")
+    other_company = {**make_profile()["company"], "inn": "7709999990", "legal_name": "ООО Другая компания"}
+    assert (await client.patch("/auth/me", json={"company": other_company}, headers=other)).status_code == 200
     await _issue(client, other)
 
     headers = await _setup_full_profile(client, "own-client@example.com")
@@ -103,3 +105,62 @@ def test_add_bank_credits_without_own_credits_keeps_history():
     assert merged.monthly_debt_payments_rub == 121_680
     assert merged.max_days_past_due_12m == 0 and merged.credit_utilization == 0.2
     assert summary == {"count": 1, "outstanding_rub": 1_000_000, "monthly_payments_rub": 91_680}
+
+
+async def _approved_ids(client, headers, n):
+    return [(await client.post("/applications", json=make_body("term_loan"), headers=headers)).json()["application_id"] for _ in range(n)]
+
+
+async def test_offers_made_before_another_credit_cannot_be_issued(e2e_client):
+    """Несколько одобренных заявок до первой выдачи: после оформления одной остальные устаревают"""
+    client, servicer = e2e_client
+    _recording(servicer)
+    headers = await _setup_full_profile(client, "parallel@example.com")
+    first, second, third = await _approved_ids(client, headers, 3)
+    # третью успели принять до выдачи первой
+    assert (await client.post(f"/applications/{third}/accept", headers=headers)).status_code == 200
+
+    await client.post(f"/applications/{first}/accept", headers=headers)
+    assert (await client.post(f"/applications/{first}/issue", headers=headers)).json()["status"] == "issued"
+
+    # вторая: предложение устарело, принять нельзя, кнопок принятия нет
+    d = (await client.get(f"/applications/{second}", headers=headers)).json()
+    assert d["offer_outdated"] is True and "accept" not in d["actions"] and "reject" in d["actions"]
+    r = await client.post(f"/applications/{second}/accept", headers=headers)
+    assert r.status_code == 409 and "оформлен другой кредит" in r.json()["detail"]
+
+    # третья уже принята, но оформить её тоже нельзя — только отказаться
+    d = (await client.get(f"/applications/{third}", headers=headers)).json()
+    assert d["offer_outdated"] is True and d["actions"] == ["reject"]
+    r = await client.post(f"/applications/{third}/issue", headers=headers)
+    assert r.status_code == 409 and "оформлен другой кредит" in r.json()["detail"]
+
+    # в списке — тот же признак; новая заявка учитывает выданный кредит и может быть оформлена
+    listed = {a["application_id"]: a for a in (await client.get("/applications", headers=headers, params={"limit": 50})).json()["applications"]}
+    assert listed[second]["offer_outdated"] and not listed[first]["offer_outdated"]
+    fresh = (await client.post("/applications", json=make_body("term_loan"), headers=headers)).json()
+    assert fresh["offer_outdated"] is False and fresh["enriched_data"]["bank_credits"]["count"] == 1
+    assert (await client.post(f"/applications/{fresh['application_id']}/accept", headers=headers)).status_code == 200
+    assert (await client.post(f"/applications/{fresh['application_id']}/issue", headers=headers)).status_code == 200
+
+
+async def test_offer_not_outdated_without_new_credits(e2e_client):
+    client, servicer = e2e_client
+    _recording(servicer)
+    headers = await _setup_full_profile(client, "single@example.com")
+    (app_id,) = await _approved_ids(client, headers, 1)
+    d = (await client.get(f"/applications/{app_id}", headers=headers)).json()
+    assert d["offer_outdated"] is False and d["actions"] == ["accept", "reject"]
+
+
+async def test_second_account_of_same_company_sees_its_credits(e2e_client):
+    """Заёмщик — компания: второй аккаунт с тем же ИНН видит кредиты, выданные первому"""
+    client, servicer = e2e_client
+    seen = _recording(servicer)
+    first_account = await _setup_full_profile(client, "owner@example.com")
+    issued = await _issue(client, first_account)
+    second_account = await _setup_full_profile(client, "accountant@example.com")
+    d = (await client.post("/applications", json=make_body("term_loan"), headers=second_account)).json()
+    bki = generate_bki(make_profile()["company"]["inn"])
+    assert seen["payments"] == bki.monthly_debt_payments_rub + issued["monthly_payment_rub"]
+    assert d["enriched_data"]["bank_credits"]["count"] == 1

@@ -52,6 +52,22 @@ def ensure_not_future(value: datetime | None, what: str) -> None:
         raise ValueError(f"{what} не может быть в будущем")
 
 
+def ensure_consistent_financials(f) -> None:
+    """
+    Финансы из анкеты не противоречат сами себе: месячная выручка, прибыль и EBITDA
+    не больше годовой выручки. Иначе, например, правило «платежи по долгам не больше 55%
+    месячной выручки» обходится завышенной месячной выручкой.
+    """
+    if f is None:
+        return
+    if f.monthly_revenue_rub > f.annual_revenue_rub:
+        raise ValueError("Выручка в месяц не может быть больше выручки за год")
+    if f.annual_net_profit_rub > f.annual_revenue_rub:
+        raise ValueError("Чистая прибыль не может быть больше выручки за год")
+    if f.ebitda_rub > f.annual_revenue_rub:
+        raise ValueError("EBITDA не может быть больше выручки за год")
+
+
 class SApplication(BaseModel):
     """Параметры кредитной заявки для ML-сервиса"""
     product_type: ProductType
@@ -194,6 +210,7 @@ class SApplicationCreateRequest(BaseModel):
             ensure_not_future(self.company.registration_date, "Дата регистрации компании")
         if self.financials is not None:
             ensure_not_future(self.financials.period_end, "Отчётный период")
+            ensure_consistent_financials(self.financials)
         return self
 
 
@@ -241,6 +258,7 @@ class SApplicationDetail(BaseModel):
     issued_at: datetime | None = None
     bank_decision: SBankDecision | None = None
     actions: list[ApplicationAction] = []
+    offer_outdated: bool = False
     created_at: datetime
     updated_at: datetime
     application: SApplication
@@ -259,8 +277,35 @@ class SApplicationListResponse(BaseModel):
     previous_cursor: str | None = None
 
 
-def application_orm_to_schema(application) -> SApplicationDetail:
-    """Собирает SApplicationDetail из ORM-модели заявки"""
+OPEN_OFFER_STATUSES = ("confirmed", "different", "accepted")
+
+
+def bank_credits_at_scoring(application) -> int:
+    """Сколько кредитов нашего банка у клиента было учтено при оценке заявки"""
+    summary = (getattr(application, "enriched_data", None) or {}).get("bank_credits") or {}
+    return int(summary.get("count") or 0)
+
+
+def is_offer_outdated(application, issued_count: int | None) -> bool:
+    """
+    Предложение устарело: после оценки заявки клиенту оформили другой кредит, и нагрузка,
+    на которой посчитано решение, уже не та. issued_count — сколько кредитов у клиента
+    оформлено сейчас (сама заявка ещё не выдана, поэтому в счёт не входит).
+    """
+    if issued_count is None or getattr(application, "status", None) not in OPEN_OFFER_STATUSES:
+        return False
+    if not getattr(application, "offer", None):
+        return False
+    return issued_count > bank_credits_at_scoring(application)
+
+
+def application_orm_to_schema(application, issued_count: int | None = None) -> SApplicationDetail:
+    """
+    Собирает SApplicationDetail из ORM-модели заявки. issued_count — сколько кредитов клиенту
+    уже оформлено: если после оценки их стало больше, предложение помечается устаревшим и
+    принять или оформить его нельзя.
+    """
+    outdated = is_offer_outdated(application, issued_count)
     scoring_result = None
     if application.scoring_result is not None:
         scoring_result = SScoreApplicationResponse.model_validate(application.scoring_result)
@@ -274,9 +319,13 @@ def application_orm_to_schema(application) -> SApplicationDetail:
         contract_number=getattr(application, "contract_number", None),
         issued_at=getattr(application, "issued_at", None),
         bank_decision=getattr(application, "bank_decision", None),
-        actions=available_actions(
-            application.status, getattr(application, "outcome", None), bool(getattr(application, "offer", None))
-        ),
+        actions=[
+            a for a in available_actions(
+                application.status, getattr(application, "outcome", None), bool(getattr(application, "offer", None))
+            )
+            if not (outdated and a in ("accept", "issue"))
+        ],
+        offer_outdated=outdated,
         created_at=application.created_at,
         updated_at=application.updated_at,
         application=SApplication(

@@ -97,7 +97,7 @@ def decide_offer(application: ApplicationOrm, response, products) -> tuple[str |
 
 def add_bank_credits(history: SCreditHistory, offers: list[dict]) -> tuple[SCreditHistory, dict | None]:
     """
-    Добавляет к кредитной истории кредиты, которые наш банк уже выдал клиенту.
+    Добавляет к кредитной истории кредиты, которые наш банк уже выдал компании (по ИНН).
     Мок БКИ о них не знает, а без них каждая новая заявка оценивалась бы как первая.
     Упрощение: считаем, что погашений по ним ещё не было — остаток равен сумме кредита.
     Возвращает историю и сводку для карточки (None — своих кредитов нет).
@@ -270,7 +270,7 @@ class ApplicationService:
         # К истории добавляются кредиты, которые наш банк уже выдал этому клиенту.
         bki_history = _credit_history_from_bki(enriched)
         own_offers = await ApplicationRepository.list_issued_offers(
-            application.user_id, exclude_application_id=application.application_id
+            application.inn, exclude_application_id=application.application_id
         )
         base_history = bki_history
         if base_history is None and own_offers:

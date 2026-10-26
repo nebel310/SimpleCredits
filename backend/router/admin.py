@@ -9,9 +9,8 @@ from schemas.applications import (
     ApplicationStatus,
     SApplicationDetail,
     SBankDecisionRequest,
-    application_orm_to_schema,
 )
-from services import bank
+from services import bank, deal
 from services.deal import DealError
 from schemas.base import ErrorResponse, ValidationErrorResponse
 from utils.pagination import decode_cursor, encode_cursor
@@ -66,7 +65,7 @@ async def list_all_applications(
         raise HTTPException(status_code=400, detail=str(exc))
 
     return SAdminApplicationListResponse(
-        applications=[application_orm_to_schema(a) for a in applications],
+        applications=await deal.details(applications),
         next_cursor=encode_cursor(next_id) if next_id else None,
         previous_cursor=encode_cursor(prev_id) if prev_id else None,
     )
@@ -109,4 +108,4 @@ async def decide_application(
         updated = await bank.decide_manual_review(application, body, decided_by=current_user.email)
     except DealError as exc:
         raise HTTPException(status_code=409, detail=exc.message)
-    return application_orm_to_schema(updated)
+    return await deal.detail(updated)

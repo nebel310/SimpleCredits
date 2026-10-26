@@ -2,7 +2,7 @@ from datetime import datetime, date
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 from typing import Literal
 
-from schemas.applications import SCompany, SFinancials, SCreditHistory, ensure_not_future
+from schemas.applications import SCompany, SFinancials, SCreditHistory, ensure_consistent_financials, ensure_not_future
 
 
 class SUserRegister(BaseModel):
@@ -71,6 +71,7 @@ class SUserUpdate(BaseModel):
             ensure_not_future(self.company.registration_date, "Дата регистрации компании")
         if self.financials is not None:
             ensure_not_future(self.financials.period_end, "Отчётный период")
+            ensure_consistent_financials(self.financials)
         return self
 
 

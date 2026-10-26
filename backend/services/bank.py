@@ -47,6 +47,8 @@ async def decide_manual_review(application: ApplicationOrm, body: SBankDecisionR
         else:
             to_status, values["outcome"] = "confirmed", None
     else:
+        if body.recommended_amount_rub >= applicant.amount_rub:
+            raise DealError("Одобрить с другой суммой можно только на меньшую сумму, чем запросил клиент")
         reduced = with_amount(applicant, body.recommended_amount_rub)
         product = chosen if not mismatch_reasons(chosen, reduced) else pick_product(products, reduced)
         if product is None:

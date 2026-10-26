@@ -58,3 +58,11 @@ async def test_decision_only_for_manual_review(e2e_client):
     admin = await _auth_headers(client, "bank@example.com")
     r = await client.post(f"/admin/applications/{app_id}/decision", json={"decision": "decline"}, headers=admin)
     assert r.status_code == 409
+
+
+async def test_bank_cannot_approve_more_than_requested(e2e_client):
+    """«Одобрить с другой суммой» — только меньше запрошенной"""
+    client, servicer = e2e_client
+    headers, admin, app_id = await _review_and_admin(client, servicer, "more@example.com")
+    r = await client.post(f"/admin/applications/{app_id}/decision", json={"decision": "approve_with_conditions", "recommended_amount_rub": 50_000_000}, headers=admin)
+    assert r.status_code == 409 and "меньшую сумму" in r.json()["detail"]

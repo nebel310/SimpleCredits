@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
 from database import new_session
 from models.applications import ApplicationOrm, ApplicationEventOrm
@@ -187,17 +187,35 @@ class ApplicationRepository:
             return (await session.execute(query)).scalars().first()
 
     @classmethod
-    async def list_issued_offers(cls, user_id: int, exclude_application_id: str | None = None) -> list[dict]:
-        """Условия кредитов, которые банк уже выдал клиенту (статус issued)"""
+    async def list_issued_offers(cls, inn: str, exclude_application_id: str | None = None) -> list[dict]:
+        """
+        Условия кредитов, которые банк уже выдал компании (статус issued). Заёмщик — компания,
+        поэтому считаем по ИНН: второй аккаунт с тем же ИНН не начинает с чистого листа.
+        """
         async with new_session() as session:
             query = select(ApplicationOrm.offer).where(
-                ApplicationOrm.user_id == user_id,
+                ApplicationOrm.inn == inn,
                 ApplicationOrm.status == "issued",
             )
             if exclude_application_id:
                 query = query.where(ApplicationOrm.application_id != exclude_application_id)
             offers = (await session.execute(query)).scalars().all()
         return [offer for offer in offers if offer]
+
+    @classmethod
+    async def count_issued(cls, inns: list[str]) -> dict[str, int]:
+        """Сколько кредитов банк оформил каждой из компаний (по ИНН, статус issued)"""
+        if not inns:
+            return {}
+        async with new_session() as session:
+            rows = (await session.execute(
+                select(ApplicationOrm.inn, func.count())
+                .where(ApplicationOrm.inn.in_(set(inns)), ApplicationOrm.status == "issued")
+                .group_by(ApplicationOrm.inn)
+            )).all()
+        counts = {inn: 0 for inn in inns}
+        counts.update({inn: n for inn, n in rows})
+        return counts
 
     @classmethod
     async def update_enriched(cls, application_id: str, enriched_data: dict) -> None:
