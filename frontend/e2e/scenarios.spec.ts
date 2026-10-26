@@ -1,13 +1,21 @@
 import { expect, test } from '@playwright/test';
-import { DEMO, demoLogin, logout, openLastApplication, submitApplication } from './helpers';
+import { DEMO, demoLogin, freshClientLikeA, logout, openLastApplication, submitApplication } from './helpers';
 
 // Пять демо-компаний — пять разных исходов: одобрение с оформлением, другие условия,
 // ручная проверка с решением банка, подбор продукта банком и отказ
 
-test('A — одобрено, клиент принимает предложение и оформляет кредит', async ({ page }) => {
+test('демо-аккаунт A входит одной кнопкой, оборотный кредит выбран заранее', async ({ page }) => {
   await demoLogin(page, DEMO.a);
   await page.goto('./#/apply');
   await expect(page.locator('.choice[aria-pressed=true]')).toContainText('Оборотный кредит');
+});
+
+test('A — одобрено, клиент принимает предложение и оформляет кредит', async ({ page }) => {
+  // клиент с профилем A, но без выданных кредитов — иначе каждый прогон добавлял бы долговую нагрузку
+  await freshClientLikeA(page);
+  await page.goto('./#/apply');
+  await page.locator('.choice').filter({ has: page.getByText('Оборотный кредит', { exact: true }) }).click();
+  await page.getByLabel('Сумма').fill('3000000');
   await submitApplication(page);
   await expect(page.getByRole('heading', { name: 'Заявка одобрена' })).toBeVisible();
   await expect(page.getByText('Получены данные: ЕГРЮЛ, ФНС, БКИ')).toBeVisible();
@@ -49,7 +57,7 @@ test('C — ручная проверка: не оффер, решение пр�
 
   // банк: фильтр «Ждут проверки» → карточка → решение
   await demoLogin(page, DEMO.bank);
-  await page.getByRole('button', { name: /^Ждут проверки/ }).click();
+  await page.getByRole('button', { name: /^Ждут проверки · \d+/ }).click();
   await page.locator('tbody tr', { hasText: DEMO.c }).first().click();
   await expect(page.getByRole('heading', { name: 'Решение по заявке' })).toBeVisible();
   await page.getByText('Одобрить с другой суммой').click();

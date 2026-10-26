@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { DEMO, demoLogin, logout, submitApplication } from './helpers';
+import { DEMO, demoLogin, freshClientLikeA, logout, submitApplication } from './helpers';
 
 test('без входа любой адрес ведёт на экран входа', async ({ page }) => {
   for (const path of ['#/home', '#/apply', '#/applications', '#/bank', '#/profile']) {
@@ -19,8 +19,10 @@ test('клиент не попадает в кабинет банка, банк 
 });
 
 test('карточка заявки открывается по прямой ссылке и после обновления страницы', async ({ page }) => {
-  await demoLogin(page, DEMO.a);
+  await freshClientLikeA(page);
   await page.goto('./#/apply');
+  await page.locator('.choice').filter({ has: page.getByText('Оборотный кредит', { exact: true }) }).click();
+  await page.getByLabel('Сумма').fill('3000000');
   await submitApplication(page);
   const url = page.url();
   await page.reload();
