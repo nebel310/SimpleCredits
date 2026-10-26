@@ -10,6 +10,15 @@ from ml_grpc.exceptions import (
 from ml_grpc.generated.simplecredits.scoring.v1 import scoring_pb2, scoring_pb2_grpc
 
 
+# После перезапуска ML канал по умолчанию переподключается с паузой до ~2 минут,
+# и всё это время заявки получают 502. Ограничиваем паузу несколькими секундами.
+CHANNEL_OPTIONS = [
+    ("grpc.initial_reconnect_backoff_ms", 500),
+    ("grpc.min_reconnect_backoff_ms", 500),
+    ("grpc.max_reconnect_backoff_ms", 3000),
+]
+
+
 class ScoringClient:
     """Асинхронный клиент ML-сервиса скоринга"""
 
@@ -22,7 +31,7 @@ class ScoringClient:
 
     async def start(self):
         """Открывает gRPC-канал и создаёт stub"""
-        self._channel = aio.insecure_channel(f"{self.host}:{self.port}")
+        self._channel = aio.insecure_channel(f"{self.host}:{self.port}", options=CHANNEL_OPTIONS)
         self._stub = scoring_pb2_grpc.ScoringServiceStub(self._channel)
 
     async def close(self):

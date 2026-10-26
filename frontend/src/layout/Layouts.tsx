@@ -43,7 +43,7 @@ export function ClientLayout({ children }: { children: ReactNode }) {
           </nav>
           <div className="hdr-right">
             <span className="proto" title="Данные синтетические">Прототип</span>
-            <Who title={user.company?.legal_name ?? user.username} sub="Предприниматель" />
+            <Who title={user.company?.legal_name ?? user.username} sub="Клиент" />
           </div>
         </div>
       </header>

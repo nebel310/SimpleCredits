@@ -24,4 +24,6 @@ class SAdminStatsResponse(BaseModel):
     by_status: dict[str, int]
     by_product_type: dict[str, int]
     by_risk_grade: dict[str, int]
+    by_outcome: dict[str, int] = {}
+    by_decision: dict[str, int] = {}
     avg_score: float | None = None

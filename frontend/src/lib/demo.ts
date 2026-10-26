@@ -1,7 +1,7 @@
 import type { CreateApplicationInput, ProfileInput } from '../api';
 
-// Демо-аккаунты для показа. Все данные синтетические. При первом входе аккаунт регистрируется в бэкенде
-// и получает профиль компании через PATCH /auth/me. Исходы ниже — то, что возвращает ML-сервис для этих данных.
+// Демо-аккаунты для показа. Все данные синтетические. При первом входе аккаунт регистрируется
+// и получает профиль компании через PATCH /auth/me. Исходы ниже — то, что решает банк для этих данных.
 
 export interface DemoCompany {
   key: string;
@@ -17,11 +17,19 @@ export interface DemoCompany {
 
 const period = '2026-09-30T00:00:00Z';
 
+/** Дата регистрации «N дней назад» — так её отдаёт мок ЕГРЮЛ, и профиль с ним совпадает */
+const daysAgo = (n: number) => {
+  const d = new Date(Date.now() - n * 86_400_000);
+  return `${d.toISOString().slice(0, 10)}T00:00:00Z`;
+};
+
+// ИНН подобраны так, чтобы ответы мок-ЕГРЮЛ и мок-БКИ вели к нужному сценарию: реквизиты в профиле — как в ЕГРЮЛ,
+// кредитная история — как в БКИ (банк берёт её оттуда). Финансы — синтетические, заполняет клиент.
 export const DEMO_COMPANIES: DemoCompany[] = [
   {
     key: 'a',
-    title: 'ИП «Компания A»',
-    scenario: 'Стабильный бизнес → одобрено на запрошенных условиях',
+    title: 'ИП Компания 9986',
+    scenario: 'Стабильный бизнес → одобрено: можно принять предложение и оформить кредит',
     email: 'company-a@demo.simplecredits.ru',
     password: 'demo-a-2026',
     username: 'demo_company_a',
@@ -30,12 +38,12 @@ export const DEMO_COMPANIES: DemoCompany[] = [
       financials: { annual_revenue_rub: 48_000_000, annual_net_profit_rub: 5_600_000, ebitda_rub: 8_100_000, total_debt_rub: 1_800_000, monthly_revenue_rub: 4_000_000, monthly_expenses_rub: 3_300_000, accounts_receivable_rub: 1_400_000, cash_balance_rub: 2_200_000, period_end: period },
       credit_history: { active_obligations_count: 1, total_outstanding_rub: 1_200_000, monthly_debt_payments_rub: 65_000, max_days_past_due_12m: 0, has_current_past_due: false, credit_utilization: 0.22, closed_obligations_count: 5, applications_last_6m: 1 },
     },
-    application: { product_type: 'term_loan', requested_amount_rub: 3_000_000, term_months: 12, purpose: 'working_capital', segment: 'small' },
+    application: { product_type: 'term_loan', requested_amount_rub: 3_000_000, term_months: 12, purpose: 'working_capital', segment: 'micro' },
   },
   {
     key: 'b',
-    title: 'ООО «Компания B»',
-    scenario: 'Сумма больше 60% выручки → одобрено, но предложат меньшую сумму',
+    title: 'ООО Компания 2785',
+    scenario: 'Сумма больше 60% годовой выручки → банк предложит меньшую сумму',
     email: 'company-b@demo.simplecredits.ru',
     password: 'demo-b-2026',
     username: 'demo_company_b',
@@ -48,8 +56,8 @@ export const DEMO_COMPANIES: DemoCompany[] = [
   },
   {
     key: 'c',
-    title: 'ООО «Компания C»',
-    scenario: 'Высокая долговая нагрузка → пограничная зона риска, нужна проверка',
+    title: 'ООО Компания 7752',
+    scenario: 'Риск в пограничной зоне → заявку проверит сотрудник банка',
     email: 'company-c@demo.simplecredits.ru',
     password: 'demo-c-2026',
     username: 'demo_company_c',
@@ -62,29 +70,29 @@ export const DEMO_COMPANIES: DemoCompany[] = [
   },
   {
     key: 'd',
-    title: 'ИП «Компания D»',
+    title: 'ИП Компания 7622',
     scenario: 'Продукт не выбран → банк подберёт его сам',
     email: 'company-d@demo.simplecredits.ru',
     password: 'demo-d-2026',
     username: 'demo_company_d',
     profile: {
-      company: { inn: '502345678901', ogrn: '326500100234567', legal_name: 'ИП Компания D', legal_form: 'individual_entrepreneur', okved: '62.01', region: 'Московская область', registration_date: '2026-05-12T00:00:00Z', employee_count: 2 },
-      financials: { annual_revenue_rub: 2_400_000, annual_net_profit_rub: 300_000, ebitda_rub: 420_000, total_debt_rub: 0, monthly_revenue_rub: 400_000, monthly_expenses_rub: 330_000, accounts_receivable_rub: 120_000, cash_balance_rub: 250_000, period_end: period },
-      credit_history: { active_obligations_count: 0, total_outstanding_rub: 0, monthly_debt_payments_rub: 0, max_days_past_due_12m: 0, has_current_past_due: false, credit_utilization: 0, closed_obligations_count: 0, applications_last_6m: 0 },
+      company: { inn: '776043817622', ogrn: '392109517066945', legal_name: 'ИП Компания 7622', legal_form: 'individual_entrepreneur', okved: '46.90', region: 'Екатеринбург', registration_date: daysAgo(3234), employee_count: 11 },
+      financials: { annual_revenue_rub: 2_400_000, annual_net_profit_rub: 300_000, ebitda_rub: 420_000, total_debt_rub: 0, monthly_revenue_rub: 200_000, monthly_expenses_rub: 165_000, accounts_receivable_rub: 120_000, cash_balance_rub: 250_000, period_end: period },
+      credit_history: { active_obligations_count: 0, total_outstanding_rub: 0, monthly_debt_payments_rub: 0, max_days_past_due_12m: 0, has_current_past_due: false, credit_utilization: 0, closed_obligations_count: 2, applications_last_6m: 2 },
     },
     application: { product_type: null, requested_amount_rub: 500_000, term_months: 12, purpose: 'equipment', segment: 'micro' },
   },
   {
     key: 'e',
-    title: 'ООО «Компания E»',
-    scenario: 'Текущая просрочка по кредитам → отказ',
+    title: 'ООО Компания 1178',
+    scenario: 'Текущая просрочка в БКИ → отказ с объяснением',
     email: 'company-e@demo.simplecredits.ru',
     password: 'demo-e-2026',
     username: 'demo_company_e',
     profile: {
-      company: { inn: '7734567890', ogrn: '1207746345678', legal_name: 'ООО Компания E', legal_form: 'llc', okved: '41.20', region: 'Новосибирск', registration_date: '2020-02-20T00:00:00Z', employee_count: 18 },
-      financials: { annual_revenue_rub: 18_000_000, annual_net_profit_rub: -600_000, ebitda_rub: 400_000, total_debt_rub: 7_500_000, monthly_revenue_rub: 1_500_000, monthly_expenses_rub: 1_560_000, accounts_receivable_rub: 2_600_000, cash_balance_rub: 150_000, period_end: period },
-      credit_history: { active_obligations_count: 3, total_outstanding_rub: 6_900_000, monthly_debt_payments_rub: 420_000, max_days_past_due_12m: 96, has_current_past_due: true, credit_utilization: 0.91, closed_obligations_count: 2, applications_last_6m: 5 },
+      company: { inn: '7754811178', ogrn: '1255099648783', legal_name: 'ООО Компания 1178', legal_form: 'llc', okved: '62.01', region: 'Москва', registration_date: daysAgo(586), employee_count: 83 },
+      financials: { annual_revenue_rub: 18_000_000, annual_net_profit_rub: -600_000, ebitda_rub: 400_000, total_debt_rub: 4_259_182, monthly_revenue_rub: 1_500_000, monthly_expenses_rub: 1_560_000, accounts_receivable_rub: 2_600_000, cash_balance_rub: 150_000, period_end: period },
+      credit_history: { active_obligations_count: 2, total_outstanding_rub: 4_259_182, monthly_debt_payments_rub: 224_428, max_days_past_due_12m: 79, has_current_past_due: true, credit_utilization: 0.41, closed_obligations_count: 2, applications_last_6m: 6 },
     },
     application: { product_type: 'term_loan', requested_amount_rub: 4_000_000, term_months: 24, purpose: 'refinancing', segment: 'small' },
   },

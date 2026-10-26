@@ -4,10 +4,11 @@ import { api, useSession, type CreditHistory, type Financials, type Fns, type Le
 import { useAction } from '../../lib/hooks';
 import { date, money } from '../../lib/format';
 import { LEGAL_FORM_NAME } from '../../lib/labels';
-import { Btn, Check, DateField, ErrorState, MoneyField, PageTitle, SelectField, TextField, toast } from '../../ui/kit';
+import { Btn, DateField, ErrorState, MoneyField, PageTitle, SelectField, StatusBanner, TextField, toast } from '../../ui/kit';
 
 // Профиль компании (USERFLOW, шаг 3): реквизиты, финансы и кредитная история.
 // Заполняется один раз через PATCH /auth/me и дальше подставляется во все заявки.
+// Кредитную историю клиент не вводит: она приходит из БКИ по ИНН (её же банк берёт для оценки).
 
 type Money = number | null;
 const toDay = (iso?: string | null) => (iso ? iso.slice(0, 10) : '');
@@ -76,6 +77,12 @@ export function Profile() {
   const [v, setV] = useState(() => initial(user));
   const [tried, setTried] = useState(false);
   const [fns, setFns] = useState<Fns | null>(null);
+  // По какому ИНН получена кредитная история: сменили ИНН — историю нужно запросить заново
+  const [bkiInn, setBkiInn] = useState<string | null>(user?.credit_history ? (user.company?.inn ?? null) : null);
+  const [bkiDate, setBkiDate] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  // Профиль заполняют впервые — после сохранения предложим сразу подать заявку
+  const [firstSave] = useState(() => !user?.company);
   const set = <K extends keyof typeof v>(k: K, val: (typeof v)[K]) => setV((s) => ({ ...s, [k]: val }));
 
   const innOk = /^\d{10}$|^\d{12}$/.test(v.inn);
@@ -85,9 +92,12 @@ export function Profile() {
     setV((s) => ({ ...s, ogrn: e.ogrn, legal_name: e.legal_name, legal_form: e.legal_form, okved: e.okved, region: e.region, registration_date: toDay(e.registration_date), employee_count: e.employee_count }));
     setFns(f);
     toast('Реквизиты подставлены из ЕГРЮЛ');
+    // кредитную историю по этому ИНН подтягиваем сразу
+    if (bkiInn !== v.inn) bki.run();
   });
   const bki = useAction(async () => {
-    const b = await api.bki(v.inn);
+    const inn = v.inn;
+    const b = await api.bki(inn);
     setV((s) => ({
       ...s,
       ch: {
@@ -101,7 +111,8 @@ export function Profile() {
       has_current_past_due: b.has_current_past_due,
       utilization: Math.round(b.credit_utilization * 100),
     }));
-    toast(`Кредитная история из БКИ на ${date(b.last_update)}`);
+    setBkiInn(inn);
+    setBkiDate(b.last_update);
   });
 
   const err = {
@@ -114,10 +125,19 @@ export function Profile() {
     employee_count: v.employee_count === null ? 'Укажите число' : null,
     period_end: dateError(v.period_end, 'Отчётный период'),
     utilization: v.utilization === null || v.utilization > 100 ? 'От 0 до 100%' : null,
+    bki: bkiInn !== v.inn ? (bkiInn ? 'ИНН изменился — запросите кредитную историю заново' : 'Запросите кредитную историю в БКИ') : null,
   };
   const finMissing = FIN_FIELDS.filter((f) => v.fin[f.key] === null).map((f) => f.key);
+  // Финансы не противоречат сами себе — как проверяет бэкенд
+  const yearly = v.fin.annual_revenue_rub;
+  const over = (x: number | null) => yearly !== null && x !== null && x > yearly;
+  const finErr: Partial<Record<keyof typeof v.fin, string>> = {
+    ...(over(v.fin.monthly_revenue_rub) ? { monthly_revenue_rub: 'Не больше выручки за год' } : {}),
+    ...(over(v.fin.annual_net_profit_rub) ? { annual_net_profit_rub: 'Не больше выручки за год' } : {}),
+    ...(over(v.fin.ebitda_rub) ? { ebitda_rub: 'Не больше выручки за год' } : {}),
+  };
   const chMissing = (Object.keys(v.ch) as (keyof typeof v.ch)[]).filter((k) => v.ch[k] === null);
-  const valid = !Object.values(err).some(Boolean) && finMissing.length === 0 && chMissing.length === 0;
+  const valid = !Object.values(err).some(Boolean) && finMissing.length === 0 && chMissing.length === 0 && Object.keys(finErr).length === 0;
 
   const save = useAction(async () => {
     const me = await api.updateMe({
@@ -126,8 +146,14 @@ export function Profile() {
       credit_history: { ...(v.ch as Record<string, number>), has_current_past_due: v.has_current_past_due, credit_utilization: (v.utilization ?? 0) / 100 } as unknown as CreditHistory,
     });
     setUser(me);
-    toast('Профиль сохранён');
-    if (params.get('next') === 'apply') nav('/apply');
+    if (params.get('next') === 'apply') {
+      toast('Профиль сохранён');
+      nav('/apply');
+    } else {
+      // при первом сохранении вместо тоста — баннер с переходом к заявке
+      if (!firstSave) toast('Профиль сохранён');
+      setSaved(true);
+    }
   });
 
   const show = (k: keyof typeof err) => (tried ? err[k] : null);
@@ -172,7 +198,7 @@ export function Profile() {
         <h2 className="h2">Финансы за последний период</h2>
         <div className="grid-fields">
           {FIN_FIELDS.map((f) => (
-            <MoneyField key={f.key} label={f.label} signed={f.signed} value={v.fin[f.key]} onChange={(x) => set('fin', { ...v.fin, [f.key]: x })} error={tried && v.fin[f.key] === null ? 'Заполните' : null} hint={f.signed ? 'Убыток — со знаком минус' : undefined} />
+            <MoneyField key={f.key} label={f.label} signed={f.signed} value={v.fin[f.key]} onChange={(x) => set('fin', { ...v.fin, [f.key]: x })} error={finErr[f.key] ?? (tried && v.fin[f.key] === null ? 'Заполните' : null)} hint={f.signed ? 'Убыток — со знаком минус' : undefined} />
           ))}
           <DateField label="Отчётный период по" value={v.period_end} onChange={(x) => set('period_end', x)} error={show('period_end')} />
         </div>
@@ -182,20 +208,52 @@ export function Profile() {
         <div className="row-c between">
           <h2 className="h2">Кредитная история</h2>
           <Btn view="outlined" size={40} onClick={() => bki.run()} loading={bki.pending} disabled={!innOk}>
-            Запросить в БКИ
+            {bkiInn === v.inn ? 'Обновить из БКИ' : 'Запросить в БКИ'}
           </Btn>
         </div>
+        <span className="small muted">Кредитную историю вводить не нужно: она приходит из БКИ по ИНН. Эти же данные банк использует при оценке заявки.</span>
         {bki.error && <ErrorState error={bki.error.status === 404 ? 'По этому ИНН в БКИ ничего не найдено' : bki.error} />}
-        <div className="grid-fields">
-          <IntField label="Действующих кредитов" value={v.ch.active_obligations_count} onChange={(x) => set('ch', { ...v.ch, active_obligations_count: x })} error={tried && v.ch.active_obligations_count === null ? 'Заполните' : null} />
-          <MoneyField label="Остаток долга по кредитам" value={v.ch.total_outstanding_rub} onChange={(x) => set('ch', { ...v.ch, total_outstanding_rub: x })} error={tried && v.ch.total_outstanding_rub === null ? 'Заполните' : null} />
-          <MoneyField label="Платежи по кредитам в месяц" value={v.ch.monthly_debt_payments_rub} onChange={(x) => set('ch', { ...v.ch, monthly_debt_payments_rub: x })} error={tried && v.ch.monthly_debt_payments_rub === null ? 'Заполните' : null} />
-          <IntField label="Самая долгая просрочка за год, дней" value={v.ch.max_days_past_due_12m} onChange={(x) => set('ch', { ...v.ch, max_days_past_due_12m: x })} error={tried && v.ch.max_days_past_due_12m === null ? 'Заполните' : null} />
-          <IntField label="Использование кредитных лимитов, %" value={v.utilization} onChange={(x) => set('utilization', x)} error={show('utilization')} />
-          <IntField label="Закрытых кредитов" value={v.ch.closed_obligations_count} onChange={(x) => set('ch', { ...v.ch, closed_obligations_count: x })} error={tried && v.ch.closed_obligations_count === null ? 'Заполните' : null} />
-          <IntField label="Заявок на кредит за 6 месяцев" value={v.ch.applications_last_6m} onChange={(x) => set('ch', { ...v.ch, applications_last_6m: x })} error={tried && v.ch.applications_last_6m === null ? 'Заполните' : null} />
-        </div>
-        <Check checked={v.has_current_past_due} onChange={(x) => set('has_current_past_due', x)} label="Сейчас есть просрочка по кредиту" />
+        {bkiInn === v.inn ? (
+          <>
+            <dl className="dl-grid" aria-label="Кредитная история из БКИ">
+              <div>
+                <dt>Действующих кредитов</dt>
+                <dd>{v.ch.active_obligations_count}</dd>
+              </div>
+              <div>
+                <dt>Остаток долга по кредитам</dt>
+                <dd>{money(v.ch.total_outstanding_rub)}</dd>
+              </div>
+              <div>
+                <dt>Платежи по кредитам в месяц</dt>
+                <dd>{money(v.ch.monthly_debt_payments_rub)}</dd>
+              </div>
+              <div>
+                <dt>Самая долгая просрочка за год</dt>
+                <dd>{v.ch.max_days_past_due_12m ? `${v.ch.max_days_past_due_12m} дн.` : 'не было'}</dd>
+              </div>
+              <div>
+                <dt>Просрочка сейчас</dt>
+                <dd>{v.has_current_past_due ? 'есть' : 'нет'}</dd>
+              </div>
+              <div>
+                <dt>Использование лимитов</dt>
+                <dd>{v.utilization ?? 0}%</dd>
+              </div>
+              <div>
+                <dt>Закрытых кредитов</dt>
+                <dd>{v.ch.closed_obligations_count}</dd>
+              </div>
+              <div>
+                <dt>Заявок на кредит за 6 месяцев</dt>
+                <dd>{v.ch.applications_last_6m}</dd>
+              </div>
+            </dl>
+            {bkiDate && <span className="xs muted">Данные БКИ на {date(bkiDate)}</span>}
+          </>
+        ) : (
+          <div className={tried ? 'warn-box' : 'info-box'}>{err.bki ?? 'Запросите кредитную историю в БКИ'}{!innOk && ' — сначала укажите ИНН'}</div>
+        )}
       </section>
 
       {save.error && <ErrorState error={save.error} onRetry={() => save.run()} />}
@@ -213,6 +271,11 @@ export function Profile() {
         </Btn>
         {params.get('next') === 'apply' && <span className="small muted">После сохранения вернём вас к заявке</span>}
       </div>
+      {saved && firstSave && (
+        <StatusBanner kind="success" icon="check" title="Профиль сохранён" actions={<Btn view="accent" to="/apply">Подать заявку</Btn>}>
+          Теперь можно подать заявку: реквизиты и финансы подставятся в неё сами.
+        </StatusBanner>
+      )}
     </>
   );
 }

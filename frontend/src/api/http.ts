@@ -28,24 +28,28 @@ const STATUS_TEXT: Record<number, string> = {
   403: 'Недостаточно прав',
   404: 'Не найдено',
   500: 'Ошибка на сервере. Попробуйте ещё раз',
-  502: 'Сервис скоринга недоступен',
-  504: 'Сервис скоринга не ответил вовремя',
+  502: 'Сервис оценки заявок недоступен',
+  504: 'Сервис оценки заявок не ответил вовремя',
 };
 
 async function toError(res: Response): Promise<ApiError> {
-  let detail: unknown;
+  let body: Record<string, unknown> | undefined;
   try {
-    detail = (await res.json())?.detail;
+    body = await res.json();
   } catch {
-    detail = undefined;
+    body = undefined;
   }
-  if (typeof detail === 'string' && detail) return new ApiError(res.status, detail);
+  const detail: unknown = body?.detail;
+  if (typeof detail === 'string' && detail) return new ApiError(res.status, detail, body);
   if (Array.isArray(detail)) {
+    // Проверка всего тела (loc: ['body']) — например, «Выручка в месяц не может быть больше выручки за год»: текст как есть
+    const whole = detail.filter((d) => Array.isArray(d?.loc) && d.loc.length <= 1 && typeof d?.msg === 'string');
+    if (whole.length) return new ApiError(res.status, whole.map((d) => String(d.msg).replace(/^Value error, /, '')).join('; '), body);
     // 422 от FastAPI: [{ loc: ['body', 'company', 'inn'], msg: '...' }]
     const fields = [...new Set(detail.map((d) => FIELD_LABEL[String(d?.loc?.[d.loc.length - 1])] ?? String(d?.loc?.[d.loc.length - 1] ?? '')).filter(Boolean))];
     return new ApiError(res.status, fields.length ? `Проверьте поля: ${fields.join(', ')}` : 'Проверьте заполненные поля');
   }
-  return new ApiError(res.status, STATUS_TEXT[res.status] ?? `Ошибка ${res.status}`);
+  return new ApiError(res.status, STATUS_TEXT[res.status] ?? `Ошибка ${res.status}`, body);
 }
 
 interface Opts {
@@ -53,6 +57,7 @@ interface Opts {
   query?: Record<string, string | number | boolean | null | undefined>;
   auth?: boolean;
   retry?: boolean;
+  headers?: Record<string, string>;
 }
 
 function url(path: string, query?: Opts['query']) {
@@ -67,7 +72,7 @@ function url(path: string, query?: Opts['query']) {
 
 export async function request<T>(method: string, path: string, opts: Opts = {}): Promise<T> {
   const { body, query, auth = true, retry = true } = opts;
-  const headers: Record<string, string> = { Accept: 'application/json' };
+  const headers: Record<string, string> = { Accept: 'application/json', ...opts.headers };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   const token = useSession.getState().access;
   if (auth && token) headers.Authorization = `Bearer ${token}`;
@@ -99,7 +104,8 @@ export function renewSession(): Promise<boolean> {
       const s = useSession.getState();
       if (s.refresh) {
         try {
-          const r = await request<{ access_token: string }>('POST', '/auth/refresh', { query: { refresh_token: s.refresh }, auth: false });
+          // токен в теле, а не в адресе: адреса попадают в логи прокси
+          const r = await request<{ access_token: string }>('POST', '/auth/refresh', { body: { refresh_token: s.refresh }, auth: false });
           useSession.getState().setTokens(r.access_token);
           return true;
         } catch {

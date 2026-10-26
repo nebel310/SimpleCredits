@@ -142,11 +142,11 @@ class S3Client:
 
         try:
             async with self.get_client() as client:
-                resp = await client.get_object(
-                    Bucket=self.bucket_name,
-                    Key=object_key,
-                    Range=range_header
-                )
+                # Range=None boto не принимает (ParamValidationError), поэтому без диапазона его не передаём
+                params = {"Bucket": self.bucket_name, "Key": object_key}
+                if range_header:
+                    params["Range"] = range_header
+                resp = await client.get_object(**params)
                 body = resp['Body']
                 while True:
                     chunk = await body.read(chunk_size)

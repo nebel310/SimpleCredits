@@ -15,7 +15,10 @@ OKVED_LIST = (
     ("43.21", "Производство электромонтажных работ"),
 )
 REGIONS = ("Москва", "Санкт-Петербург", "Новосибирск", "Екатеринбург", "Казань")
-TAX_REGIMES = ("УСН", "ОСН", "ПАТЕНТ", "ЕСХН")
+# Режимы налогообложения по форме: патент бывает только у ИП, ЕСХН — только у
+# сельхозпроизводителей (в моках таких ОКВЭД нет, поэтому не используем)
+TAX_REGIMES_IP = ("УСН", "ПАТЕНТ", "ОСН")
+TAX_REGIMES_LEGAL = ("УСН", "ОСН")
 DIRECTORS = (
     "Иванов Иван Иванович",
     "Петров Пётр Петрович",
@@ -41,21 +44,30 @@ def _ago(days: int, now: datetime) -> datetime:
     return now - timedelta(days=days)
 
 
-def _random_ogrn(rng: random.Random) -> str:
-    """Генерирует 13-значный ОГРН из seed"""
+def _random_ogrn(rng: random.Random, legal_form: str) -> str:
+    """ОГРН юрлица — 13 цифр и начинается с 1, ОГРНИП предпринимателя — 15 цифр и начинается с 3"""
+    if legal_form == "individual_entrepreneur":
+        return "3" + "".join(str(rng.randint(0, 9)) for _ in range(14))
     return "1" + "".join(str(rng.randint(0, 9)) for _ in range(12))
+
+
+def legal_form_by_inn(inn: str, rng: random.Random) -> str:
+    """ИНН из 12 цифр — у ИП, из 10 — у организации (ООО чаще, АО реже)"""
+    if len(inn) == 12:
+        return "individual_entrepreneur"
+    return "joint_stock_company" if rng.random() < 0.15 else "llc"
 
 
 def generate_egrul(inn: str, now: datetime | None = None) -> SEgrulResponse:
     """Генерирует детерминированный ответ ЕГРЮЛ по ИНН"""
     now = now or datetime.now(timezone.utc)
     rng = _seed(inn, "egrul")
-    legal_form = rng.choice(LEGAL_FORMS)
+    legal_form = legal_form_by_inn(inn, rng)
     okved, okved_desc = rng.choice(OKVED_LIST)
     region = rng.choice(REGIONS)
     return SEgrulResponse(
         inn=inn,
-        ogrn=_random_ogrn(rng),
+        ogrn=_random_ogrn(rng, legal_form),
         legal_name=f"{LEGAL_FORM_PREFIX[legal_form]} Компания {inn[-4:]}",
         legal_form=legal_form,
         status="active",
@@ -63,7 +75,7 @@ def generate_egrul(inn: str, now: datetime | None = None) -> SEgrulResponse:
         okved_description=okved_desc,
         region=region,
         registration_date=_ago(rng.randint(180, 4000), now),
-        employee_count=rng.randint(1, 200),
+        employee_count=rng.randint(1, 15) if legal_form == "individual_entrepreneur" else rng.randint(1, 200),
         director=rng.choice(DIRECTORS),
         address=f"г. {region}, ул. Тестовая, д. {rng.randint(1, 100)}",
     )
@@ -76,7 +88,7 @@ def generate_fns(inn: str, now: datetime | None = None) -> SFnsResponse:
     has_debt = rng.random() < 0.2
     return SFnsResponse(
         inn=inn,
-        tax_regime=rng.choice(TAX_REGIMES),
+        tax_regime=rng.choice(TAX_REGIMES_IP if len(inn) == 12 else TAX_REGIMES_LEGAL),
         tax_debt_rub=rng.randint(1000, 500_000) if has_debt else 0,
         disqualified_persons=False,
         mass_address=rng.random() < 0.05,
@@ -91,15 +103,21 @@ def generate_bki(inn: str, now: datetime | None = None) -> SBkiResponse:
     now = now or datetime.now(timezone.utc)
     rng = _seed(inn, "bki")
     active = rng.randint(0, 5)
+    # Остаток долга есть только при действующих кредитах, платёж — 3–8% остатка в месяц,
+    # текущая просрочка возможна только при действующих кредитах и тогда видна в истории
+    outstanding = rng.randint(300_000, 10_000_000) if active else 0
+    payments = round(outstanding * rng.uniform(0.03, 0.08)) if active else 0
+    current_past_due = bool(active) and rng.random() < 0.1
+    max_dpd = rng.randint(1, 90) if current_past_due else rng.choice((0, 0, 0, rng.randint(1, 90)))
     return SBkiResponse(
         inn=inn,
         credit_score=rng.randint(300, 850),
         active_obligations_count=active,
-        total_outstanding_rub=rng.randint(0, 10_000_000),
-        monthly_debt_payments_rub=rng.randint(0, 500_000) if active else 0,
-        max_days_past_due_12m=rng.choice((0, 0, 0, rng.randint(1, 90))),
-        has_current_past_due=rng.random() < 0.1,
-        credit_utilization=round(rng.uniform(0.0, 0.95), 2),
+        total_outstanding_rub=outstanding,
+        monthly_debt_payments_rub=payments,
+        max_days_past_due_12m=max_dpd,
+        has_current_past_due=current_past_due,
+        credit_utilization=round(rng.uniform(0.05, 0.95), 2) if active else 0.0,
         closed_obligations_count=rng.randint(0, 10),
         applications_last_6m=rng.randint(0, 8),
         last_update=_ago(rng.randint(1, 30), now),

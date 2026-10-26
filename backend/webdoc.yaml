@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: SimpleCredits API
-  version: 2.0.0
+  version: 2.1.0
   description: |
     API умного кредитного кабинета предпринимателя (хакатон Альфа-Будущее 2026).
 
@@ -11,7 +11,8 @@ info:
     - Access-токен живёт 15 минут, refresh — 7 дней
     - Ошибки: `{"detail": "..."}`
 
-    WebSocket: `ws://localhost:3001/ws/applications?token=<access_token>`. Невалидный JWT → закрытие с кодом `4401`.
+    WebSocket: `ws://localhost:3001/ws/applications?token=<access_token>`. Невалидный или отозванный (после logout) JWT → закрытие с кодом `4401`.
+    В `status_changed` клиенту уходят только `status`, `outcome`, `explanation`, `actions` — без балла, PD и факторов модели.
 
 servers:
   - url: http://localhost:3001
@@ -44,10 +45,10 @@ components:
       type: object
       required: [username, email, password, password_confirm]
       properties:
-        username: { type: string, minLength: 1 }
+        username: { type: string, minLength: 1, maxLength: 50, description: Уникальное }
         email: { type: string, format: email }
-        password: { type: string }
-        password_confirm: { type: string }
+        password: { type: string, minLength: 6 }
+        password_confirm: { type: string, description: Должен совпадать с password, иначе 422 }
 
     SUserLogin:
       type: object
@@ -304,6 +305,45 @@ components:
         code: { type: string }
         description: { type: string }
         recommended_amount_rub: { type: integer }
+        recommended_product_type:
+          type: string
+          nullable: true
+          enum: [microloan, term_loan, overdraft, credit_line, leasing]
+          description: Если на рекомендованную сумму выбранный продукт не выдаётся — какой продукт предлагает банк
+
+    SOffer:
+      type: object
+      description: Условия предложения. Ставка внутри диапазона продукта по грейду (A — нижняя граница, E — верхняя), платёж аннуитетный.
+      required: [product_type, product_code, product_name, amount_rub, term_months, rate_percent, monthly_payment_rub, total_payment_rub, overpayment_rub]
+      properties:
+        product_type: { type: string, enum: [microloan, term_loan, overdraft, credit_line, leasing] }
+        product_code: { type: string }
+        product_name: { type: string }
+        amount_rub: { type: integer }
+        term_months: { type: integer }
+        rate_percent: { type: number }
+        monthly_payment_rub: { type: integer }
+        total_payment_rub: { type: integer }
+        overpayment_rub: { type: integer }
+
+    SBankDecision:
+      type: object
+      description: Решение сотрудника банка по ручной проверке
+      required: [decision]
+      properties:
+        decision: { type: string, enum: [approve, approve_with_conditions, decline] }
+        comment: { type: string, nullable: true }
+        recommended_amount_rub: { type: integer, nullable: true }
+        decided_at: { type: string, format: date-time, nullable: true }
+        decided_by: { type: string, nullable: true }
+
+    SBankDecisionRequest:
+      type: object
+      required: [decision]
+      properties:
+        decision: { type: string, enum: [approve, approve_with_conditions, decline] }
+        recommended_amount_rub: { type: integer, minimum: 1, nullable: true, description: Обязательна для approve_with_conditions }
+        comment: { type: string, maxLength: 1000, nullable: true }
 
     SDecisionResult:
       type: object
@@ -353,7 +393,21 @@ components:
         application_id: { type: string }
         status:
           type: string
-          enum: [pending, confirmed, different, declined, failed]
+          enum: [pending, confirmed, different, declined, failed, accepted, issued, rejected_by_client]
+        product_selected_by_system: { type: boolean, description: true — продукт подобрал банк (клиент не выбирал) }
+        outcome:
+          type: string
+          nullable: true
+          enum: [ALTERNATIVE_PRODUCT, COUNTER_OFFER, MANUAL_REVIEW]
+          description: Уточнение статуса different — что предлагает банк
+        offer: { allOf: [{ $ref: '#/components/schemas/SOffer' }], nullable: true }
+        contract_number: { type: string, nullable: true, description: Номер модельного договора после оформления }
+        issued_at: { type: string, format: date-time, nullable: true }
+        bank_decision: { allOf: [{ $ref: '#/components/schemas/SBankDecision' }], nullable: true }
+        actions:
+          type: array
+          items: { type: string, enum: [accept, reject, issue, retry] }
+          description: Что клиент может сделать с заявкой сейчас
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         application: { $ref: '#/components/schemas/SApplication' }
@@ -462,6 +516,12 @@ components:
           type: object
           additionalProperties: { type: integer }
         by_risk_grade:
+          type: object
+          additionalProperties: { type: integer }
+        by_outcome:
+          type: object
+          additionalProperties: { type: integer }
+        by_decision:
           type: object
           additionalProperties: { type: integer }
         avg_score: { type: number, nullable: true }
@@ -635,12 +695,22 @@ paths:
     post:
       tags: [Auth]
       summary: Обновить access токен
+      description: Токен лучше передавать в теле. Передача в query оставлена для совместимости. В refresh-токене есть exp.
       security: []
       parameters:
         - name: refresh_token
           in: query
-          required: true
+          required: false
           schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
       responses:
         '200':
           description: Новый access_token
@@ -700,7 +770,7 @@ paths:
   /auth/users:
     get:
       tags: [Auth]
-      summary: Список пользователей (пагинация)
+      summary: Список пользователей с профилями (только admin, пагинация)
       security: [{ bearerAuth: [] }]
       parameters:
         - { name: cursor, in: query, schema: { type: string, nullable: true } }
@@ -714,9 +784,10 @@ paths:
               schema: { $ref: '#/components/schemas/SUserListResponse' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   # ============================================================
-  # FILES (без изменений)
+  # FILES — доступ только владельцу файла и админу, чужой файл → 404
   # ============================================================
 
   /files/:
@@ -826,14 +897,18 @@ paths:
       tags: [Applications]
       summary: Создать заявку
       description: |
-        1. Валидация профиля (или заполнение из тела запроса).
-        2. Обогащение через `/mock/*`.
-        3. Отправка в ML-сервис по gRPC.
-        4. Маппинг `decision → status`.
+        1. Валидация профиля (или заполнение из тела запроса). Сегмент считается по компании (микро — до 15 сотрудников и 120 млн ₽ выручки).
+        2. Продукт: выбранный сверяется с каталогом (сегмент, цель, сумма, срок, форма и возраст компании) → 422, если не подходит.
+           Без продукта банк подбирает подходящий с минимальной ставкой; не подошёл ни один — отказ `NO_SUITABLE_PRODUCT`.
+        3. Обогащение ЕГРЮЛ/ФНС/БКИ. Кредитная история для модели — из БКИ (при недоступном БКИ — из профиля).
+        4. Отправка в ML-сервис по gRPC, маппинг `decision → status`, `outcome`, `offer`, `explanation`.
         5. WebSocket-уведомление.
 
-        На ошибке ML заявка остаётся с `status=failed`, ответ `502`.
+        На ошибке ML заявка остаётся с `status=failed`, ответ `502/504` с `application_id` — её можно повторить через `/retry`.
+        Заголовок `Idempotency-Key`: повтор с тем же ключом вернёт ту же заявку.
       security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: Idempotency-Key, in: header, required: false, schema: { type: string, maxLength: 128 } }
       requestBody:
         required: true
         content:
@@ -847,9 +922,9 @@ paths:
               schema: { $ref: '#/components/schemas/SApplicationDetail' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '422': { description: Ошибка валидации Pydantic }
-        '502': { $ref: '#/components/responses/BadGateway' }
-        '504': { $ref: '#/components/responses/GatewayTimeout' }
+        '422': { description: Ошибка валидации или выбранный продукт не подходит под заявку }
+        '502': { description: 'ML недоступен. Тело: {"detail": "...", "application_id": "..."}' }
+        '504': { description: 'Таймаут ML. Тело: {"detail": "...", "application_id": "..."}' }
     get:
       tags: [Applications]
       summary: Список своих заявок
@@ -902,6 +977,67 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /applications/{application_id}/accept:
+    post:
+      tags: [Applications]
+      summary: Принять предложение
+      description: Для статуса confirmed или different с outcome ALTERNATIVE_PRODUCT / COUNTER_OFFER и offer. Только владелец. → accepted
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: application_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Предложение принято, content: { application/json: { schema: { $ref: '#/components/schemas/SApplicationDetail' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Действие недоступно в текущем статусе }
+
+  /applications/{application_id}/issue:
+    post:
+      tags: [Applications]
+      summary: Подтвердить условия и оформить (синтетическая выдача)
+      description: Только после accept. Номер модельного договора и время выдачи. → issued
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: application_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Кредит оформлен, content: { application/json: { schema: { $ref: '#/components/schemas/SApplicationDetail' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Действие недоступно в текущем статусе }
+
+  /applications/{application_id}/reject:
+    post:
+      tags: [Applications]
+      summary: Отказаться от предложения
+      description: До оформления. → rejected_by_client
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: application_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Отказ принят, content: { application/json: { schema: { $ref: '#/components/schemas/SApplicationDetail' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Действие недоступно в текущем статусе }
+
+  /applications/{application_id}/retry:
+    post:
+      tags: [Applications]
+      summary: Повторить проверку после технической ошибки
+      description: Только для status=failed и только владелец. Та же заявка, новая попытка обогащения и скоринга; параллельный повтор → 409.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: application_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Проверка завершена, content: { application/json: { schema: { $ref: '#/components/schemas/SApplicationDetail' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Заявка не в статусе failed или повтор уже идёт }
+        '502': { description: 'ML снова недоступен. Тело: {"detail": "...", "application_id": "..."}' }
 
   # ============================================================
   # SCORING (auxiliary)
@@ -956,6 +1092,8 @@ paths:
         - { name: cursor, in: query, schema: { type: string, nullable: true } }
         - { name: direction, in: query, schema: { type: string, enum: [forward, backward], default: forward } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 10 } }
+        - { name: status, in: query, schema: { type: string, nullable: true }, description: Фильтр по статусу }
+        - { name: outcome, in: query, schema: { type: string, enum: [ALTERNATIVE_PRODUCT, COUNTER_OFFER, MANUAL_REVIEW], nullable: true }, description: 'Например, MANUAL_REVIEW — очередь ручной проверки' }
       responses:
         '200':
           description: Страница заявок

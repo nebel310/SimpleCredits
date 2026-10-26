@@ -1,4 +1,5 @@
 import os
+import uuid
 
 from datetime import datetime, timedelta, timezone
 
@@ -37,6 +38,10 @@ class UserRepository:
 
             if result.scalars().first():
                 raise ValueError("Пользователь с таким email уже существует")
+
+            same_name = await session.execute(select(UserOrm).where(UserOrm.username == user_data.username))
+            if same_name.scalars().first():
+                raise ValueError("Пользователь с таким именем уже существует")
 
             hashed_password = pwd_context.hash(user_data.password)
 
@@ -92,7 +97,17 @@ class UserRepository:
             result = await session.execute(query)
             refresh_token_orm = result.scalars().first()
 
-            if not refresh_token_orm or refresh_token_orm.expires_at < datetime.now(timezone.utc):
+            if not refresh_token_orm:
+                return None
+            expires_at = refresh_token_orm.expires_at
+            if expires_at.tzinfo is None:
+                # SQLite отдаёт даты без часового пояса — в базе они всегда в UTC
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if expires_at < datetime.now(timezone.utc):
+                return None
+            try:
+                jwt.decode(refresh_token, SECRET_KEY, algorithms=[ALGORITHM])
+            except JWTError:
                 return None
 
             return await cls.get_user_by_id(refresh_token_orm.user_id)
@@ -104,8 +119,12 @@ class UserRepository:
             delete_query = delete(RefreshTokenOrm).where(RefreshTokenOrm.user_id == user_id)
             await session.execute(delete_query)
 
-            refresh_token = jwt.encode({"sub": str(user_id)}, SECRET_KEY, algorithm=ALGORITHM)
             expires_at = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+            refresh_token = jwt.encode(
+                {"sub": str(user_id), "type": "refresh", "exp": expires_at, "jti": uuid.uuid4().hex},
+                SECRET_KEY,
+                algorithm=ALGORITHM,
+            )
 
             refresh_token_orm = RefreshTokenOrm(
                 user_id=user_id,
@@ -180,6 +199,15 @@ class UserRepository:
                             pass
 
                 user.avatar_id = new_avatar_id
+
+            if "username" in update_data:
+                taken = await session.execute(
+                    select(UserOrm).where(
+                        UserOrm.username == update_data["username"], UserOrm.id != user_id
+                    )
+                )
+                if taken.scalars().first():
+                    raise ValueError("Пользователь с таким именем уже существует")
 
             if "email" in update_data:
                 existing = await session.execute(

@@ -20,6 +20,7 @@ export function Login() {
   const [username, setUsername] = useState('');
   const [tried, setTried] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [signedInBefore] = useState(() => !!user);
 
   const go = (u: User) => nav(u.role === 'admin' ? '/bank' : profileComplete(u) ? '/home' : '/profile', { replace: true });
 
@@ -36,7 +37,9 @@ export function Login() {
     }
   });
 
-  if (user) return <Navigate to={user.role === 'admin' ? '/bank' : '/home'} replace />;
+  // Уже вошли и открыли экран входа — уводим в кабинет. Если вход идёт здесь, переходом управляет go():
+  // так демо-профиль успевает дозаполниться, а после регистрации клиент попадает в профиль
+  if (user && signedInBefore) return <Navigate to={user.role === 'admin' ? '/bank' : '/home'} replace />;
 
   const errors = {
     username: tab === 'register' && !username.trim() ? 'Укажите имя пользователя' : null,
@@ -62,7 +65,7 @@ export function Login() {
       <section className="hero">
         <div style={{ flex: '1 1 560px', minWidth: 0 }}>
           <h1 style={{ fontSize: 36 }}>Кредит для бизнеса онлайн</h1>
-          <p>Заполните профиль компании один раз, подайте заявку — банк проверит данные в ЕГРЮЛ, ФНС и БКИ, скоринговая модель посчитает решение, и вы увидите результат сразу.</p>
+          <p>Заполните профиль компании один раз и подайте заявку — банк проверит данные в ЕГРЮЛ, ФНС и БКИ, оценит риск и сразу покажет решение. Предложение можно принять и оформить здесь же.</p>
         </div>
         <Px name="heart" size={98} color="var(--c-lime)" />
       </section>
@@ -103,7 +106,7 @@ export function Login() {
             <h2 className="h2">Демо-аккаунты</h2>
             <Chip kind="lime">Для показа</Chip>
           </div>
-          <span className="small muted">При первом входе аккаунт регистрируется в бэкенде и получает синтетический профиль компании. Исход — то, что вернёт скоринговая модель.</span>
+          <span className="small muted">При первом входе создаётся демо-аккаунт с синтетическим профилем компании. Исход — то, что решит банк по данным компании и ответам ЕГРЮЛ, ФНС и БКИ.</span>
           <div className="stack-s">
             {DEMO_COMPANIES.map((d) => (
               <div key={d.key} className="row-c" style={{ gap: 14, padding: '12px 0', borderTop: '1px solid var(--c-line)', flexWrap: 'nowrap' }}>

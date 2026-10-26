@@ -28,3 +28,29 @@ describe('allApplications', () => {
     expect((fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(20);
   });
 });
+
+describe('действия по заявке', () => {
+  it('заявка уходит с ключом попытки Idempotency-Key', async () => {
+    const seen: RequestInit[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+      seen.push(init);
+      return new Response(JSON.stringify({ application_id: 'x' }), { status: 201 });
+    }));
+    await api.createApplication({ product_type: null, requested_amount_rub: 500_000, term_months: 12, purpose: 'equipment', segment: 'micro' }, 'attempt-1');
+    expect((seen[0].headers as Record<string, string>)['Idempotency-Key']).toBe('attempt-1');
+  });
+
+  it('принять, оформить, отказаться, повторить — POST на свои адреса', async () => {
+    const urls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      urls.push(`${init.method} ${url}`);
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+    await api.accept('a1');
+    await api.issue('a1');
+    await api.reject('a1');
+    await api.retry('a1');
+    await api.adminDecision('a1', { decision: 'decline' });
+    expect(urls).toEqual(['POST /api/applications/a1/accept', 'POST /api/applications/a1/issue', 'POST /api/applications/a1/reject', 'POST /api/applications/a1/retry', 'POST /api/admin/applications/a1/decision']);
+  });
+});

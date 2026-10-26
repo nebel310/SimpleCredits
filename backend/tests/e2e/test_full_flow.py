@@ -50,7 +50,7 @@ def make_body(product_type: str | None = "term_loan"):
     body = {
         "requested_amount_rub": 1500000,
         "term_months": 24,
-        "purpose": "equipment",
+        "purpose": "working_capital",
         "segment": "small",
         "consents": {
             "personal_data_processing": True,
@@ -67,7 +67,7 @@ async def _register(client, email, password="secret123"):
     return await client.post(
         "/auth/register",
         json={
-            "username": "user",
+            "username": email,
             "email": email,
             "password": password,
             "password_confirm": password,

@@ -50,7 +50,7 @@ async def test_start_creates_channel(monkeypatch):
 
     monkeypatch.setattr(
         "ml_grpc.client.aio.insecure_channel",
-        lambda url: fake_channel,
+        lambda url, options=None: fake_channel,
     )
 
     await client.start()
@@ -77,7 +77,7 @@ async def test_close_calls_channel_close(monkeypatch):
 
     monkeypatch.setattr(
         "ml_grpc.client.aio.insecure_channel",
-        lambda url: fake_channel,
+        lambda url, options=None: fake_channel,
     )
 
     await client.start()
@@ -215,3 +215,18 @@ def test_map_error_returns_correct_type():
         client._map_error(make_aio_error(grpc.StatusCode.UNKNOWN)),
         GrpcServiceError,
     )
+
+async def test_start_limits_reconnect_backoff(monkeypatch):
+    """Канал создаётся с короткой паузой переподключения (не ждём минутами после рестарта ML)"""
+    from unittest.mock import MagicMock
+
+    captured = {}
+
+    def fake_channel(url, options=None):
+        captured["url"], captured["options"] = url, dict(options or [])
+        return MagicMock()
+
+    monkeypatch.setattr("ml_grpc.client.aio.insecure_channel", fake_channel)
+    client = make_client()
+    await client.start()
+    assert captured["options"]["grpc.max_reconnect_backoff_ms"] <= 5000

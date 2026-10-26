@@ -50,7 +50,7 @@ def make_body(product_type="term_loan"):
     body = {
         "requested_amount_rub": 1500000,
         "term_months": 24,
-        "purpose": "equipment",
+        "purpose": "working_capital",
         "segment": "small",
         "consents": {
             "personal_data_processing": True,
@@ -68,7 +68,7 @@ async def _setup_user(client: httpx.AsyncClient, email: str) -> str:
     await client.post(
         "/auth/register",
         json={
-            "username": "user",
+            "username": email,
             "email": email,
             "password": "secret123",
             "password_confirm": "secret123",
@@ -121,7 +121,10 @@ async def test_ws_connect_and_receive_status_confirmed(real_server):
             status_msg = next(m for m in messages if m["type"] == "status_changed")
             assert status_msg["status"] == "confirmed"
             assert status_msg["application_id"] == app_id
-            assert status_msg["payload"]["score"] == 712
+            # клиенту по WebSocket — статус, объяснение и действия, без балла и PD модели
+            assert "score" not in status_msg["payload"] and "reason_codes" not in status_msg["payload"]
+            assert status_msg["payload"]["actions"] == ["accept", "reject"]
+            assert status_msg["payload"]["explanation"].startswith("Одобрено")
 
 
 async def test_ws_receives_failed_on_ml_down(real_server):
@@ -207,3 +210,18 @@ async def test_ws_reconnect_restores_events(real_server):
         assert "enriched" in types
         assert "scored" in types
         assert "status_changed" in types
+
+async def test_ws_rejects_token_after_logout(real_server):
+    """После выхода из аккаунта канал по старому токену не открывается (4401), как и HTTP"""
+    base_url, _ = real_server
+    async with httpx.AsyncClient(base_url=base_url) as client:
+        token = await _setup_user(client, "ws-logout@example.com")
+        headers = {"Authorization": f"Bearer {token}"}
+        assert (await client.post("/auth/logout", headers=headers)).status_code == 200
+        assert (await client.get("/auth/me", headers=headers)).status_code == 401
+
+    ws_url = base_url.replace("http://", "ws://") + f"/ws/applications?token={token}"
+    with pytest.raises(websockets.ConnectionClosed) as exc:
+        async with websockets.connect(ws_url) as ws:
+            await ws.recv()
+    assert exc.value.code == 4401

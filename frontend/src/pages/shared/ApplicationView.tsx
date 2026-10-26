@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { api, type Application, type AppEvent, type Product } from '../../api';
+import { useEffect, useState } from 'react';
+import { api, type AppAction, type Application, type AppEvent, type Product } from '../../api';
 import { useLiveUpdates } from '../../api/ws';
 import { useAction, useQuery } from '../../lib/hooks';
 import { loadProducts, productByType, productName } from '../../lib/catalog';
@@ -9,7 +9,7 @@ import { Btn, Chip, EmptyState, ErrorState, Loading, Meter, PageTitle, StatusBan
 
 const yesNo = (b: boolean) => (b ? 'да' : 'нет');
 
-/** Карточка заявки: решение скоринга, факторы, данные госисточников, история. Общая для клиента и банка */
+/** Карточка заявки: статус и следующее действие, трекер, предложение, объяснение решения, данные и история. Общая для клиента и банка */
 export function ApplicationView({ id, bank }: { id: string; bank?: boolean }) {
   const q = useQuery(() => Promise.all([api.application(id), api.events(id)]), [id]);
   const products = useQuery(loadProducts, []);
@@ -22,7 +22,7 @@ export function ApplicationView({ id, bank }: { id: string; bank?: boolean }) {
   useLiveUpdates((m) => {
     if (m.type === 'reconnected' || m.application_id === id) q.reload(true);
   });
-  // Запасной вариант, пока статус pending (и для банка, которому WebSocket не шлёт события)
+  // Запасной вариант, пока заявка обрабатывается (и для банка, которому WebSocket не шлёт события)
   const pending = q.data?.[0].status === 'pending';
   useEffect(() => {
     if (!pending) return;
@@ -54,20 +54,107 @@ function View({ a, events, products, bank, onDecision, decisionPending, decision
     .filter((x): x is string => Boolean(x)))];
   const e = a.enriched_data;
 
-  const actions = bank ? null : reduce ? (
+  return (
     <>
-      <Btn view="accent" to={`/apply?product=${code ?? ''}&amount=${reduce.recommended_amount_rub}&term=${p.term_months}&purpose=${p.purpose}`}>
-        Подать заявку на {money(reduce.recommended_amount_rub)}
-      </Btn>
-      <Btn view="outlined" to="/applications">
-        К списку заявок
-      </Btn>
+      {can('retry') && (
+        <Btn view="accent" onClick={() => act.run('retry')} loading={act.pending}>
+          Повторить проверку
+        </Btn>
+      )}
+      {can('accept') && (
+        <Btn view="accent" onClick={() => act.run('accept')} loading={act.pending}>
+          Принять предложение
+        </Btn>
+      )}
+      {can('issue') && (
+        <Btn view="accent" onClick={() => setAsk('issue')}>
+          Подтвердить и оформить
+        </Btn>
+      )}
+      {can('reject') && (
+        <Btn view="outlined" onClick={() => setAsk('reject')}>
+          Отказаться
+        </Btn>
+      )}
+      {a.offer_outdated && (
+        <Btn view="accent" to={`${again}&product=${o?.product_code ?? ''}`}>
+          Новая заявка с теми же параметрами
+        </Btn>
+      )}
+      {a.status === 'declined' && (
+        <Btn view={noProduct(a) ? 'accent' : 'outlined'} to={noProduct(a) ? again : '/apply'}>
+          {noProduct(a) ? 'Изменить параметры' : 'Новая заявка'}
+        </Btn>
+      )}
+      {(a.status === 'rejected_by_client' || a.status === 'issued') && (
+        <Btn view="outlined" to="/apply">
+          Новая заявка
+        </Btn>
+      )}
+      {act.error && !ask && <span className="small" style={{ color: 'var(--c-negative-ink)', fontWeight: 600, alignSelf: 'center' }}>{retryError}</span>}
+      <Confirm
+        open={ask === 'issue'}
+        title="Подтвердить и оформить?"
+        text={
+          o ? (
+            <>
+              {o.product_name}: {money(o.amount_rub)} на {months(o.term_months)} под {rate(o.rate_percent)} годовых, платёж {money(o.monthly_payment_rub)} в месяц. После подтверждения оформим модельный договор — выдача синтетическая, без реальных денег.
+              {act.error && <span style={{ display: 'block', marginTop: 8, color: 'var(--c-negative-ink)', fontWeight: 600 }}>{act.error.message}</span>}
+            </>
+          ) : (
+            'Оформим кредит на условиях предложения.'
+          )
+        }
+        confirm="Подтвердить и оформить"
+        onConfirm={() => act.run('issue')}
+        onClose={() => setAsk(null)}
+        pending={act.pending}
+      />
+      <Confirm
+        open={ask === 'reject'}
+        title="Отказаться от предложения?"
+        text={
+          <>
+            Заявка закроется, принять это предложение потом будет нельзя. Понадобятся деньги — подайте новую заявку.
+            {act.error && <span style={{ display: 'block', marginTop: 8, color: 'var(--c-negative-ink)', fontWeight: 600 }}>{act.error.message}</span>}
+          </>
+        }
+        confirm="Отказаться"
+        cancel="Не отказываться"
+        danger
+        onConfirm={() => act.run('reject')}
+        onClose={() => setAsk(null)}
+        pending={act.pending}
+      />
     </>
-  ) : a.status === 'declined' || a.status === 'failed' ? (
-    <Btn view="outlined" to="/apply">
-      Новая заявка
-    </Btn>
-  ) : null;
+  );
+}
+
+function View({ a, events, products, bank, onUpdate }: { a: Application; events: AppEvent[]; products?: Product[]; bank?: boolean; onUpdate: (next: Application) => void }) {
+  const p = a.application;
+  const name = appTitle(a, productName(products, p.product_type));
+  const d = display(a, name);
+  // банку — своё пояснение к ручной проверке: решение за ним
+  if (bank && a.status === 'different' && a.outcome === 'MANUAL_REVIEW') {
+    d.title = 'Ждёт решения банка';
+    d.text = 'Модель не приняла решение автоматически. Посмотрите оценку и данные компании и примите решение в форме ниже.';
+  }
+  const track = trackState(a, events);
+  const e = a.enriched_data;
+  const o = a.offer;
+  const manual = a.status === 'different' && a.outcome === 'MANUAL_REVIEW';
+  const beforeIssue = (a.status === 'confirmed' || a.status === 'different' || a.status === 'accepted') && !a.offer_outdated;
+  const facts = o
+    ? [
+        { label: 'Сумма', value: money(o.amount_rub) },
+        { label: 'Ставка', value: `${rate(o.rate_percent)} годовых` },
+        { label: 'Платёж в месяц', value: money(o.monthly_payment_rub) },
+      ]
+    : [
+        { label: 'Сумма', value: money(p.requested_amount_rub) },
+        { label: 'Срок', value: months(p.term_months) },
+        { label: 'Цель', value: PURPOSE_NAME[p.purpose] },
+      ];
 
   return (
     <>
@@ -80,21 +167,22 @@ function View({ a, events, products, bank, onDecision, decisionPending, decision
           </span>
         }
       />
-      <Tracker index={trackIndex(a.status, events)} stop={a.status === 'declined' || a.status === 'failed'} />
       <StatusBanner
-        kind={meta.banner}
-        icon={meta.icon}
-        chip={<Chip kind={meta.kind}>{meta.chip}</Chip>}
-        title={out.title}
-        actions={actions}
-        facts={[
-          { label: 'Сумма', value: money(p.requested_amount_rub) },
-          reduce ? { label: 'Рекомендуемая сумма', value: money(reduce.recommended_amount_rub) } : { label: 'Срок', value: months(p.term_months) },
-          { label: 'Цель', value: PURPOSE_NAME[p.purpose] },
-        ]}
+        kind={d.banner}
+        icon={d.icon}
+        chip={<Chip kind={d.kind}>{d.chip}</Chip>}
+        title={d.title}
+        actions={bank ? null : <ClientActions a={a} onUpdate={onUpdate} />}
+        facts={facts}
       >
-        {out.text}
+        <span>{d.text}</span>
+        {!bank && d.next && (
+          <span style={{ display: 'block', marginTop: 6, fontWeight: 600 }}>
+            Что дальше: {d.next.charAt(0).toLowerCase() + d.next.slice(1)}
+          </span>
+        )}
       </StatusBanner>
+      <Tracker index={track.index} stop={track.stop} labels={track.labels} sub={track.sub} />
 
       {bank && a.status === 'different' && dec?.decision === 'manual_review' && (
         <section className="card">
@@ -120,71 +208,13 @@ function View({ a, events, products, bank, onDecision, decisionPending, decision
 
       <div className="row">
         <div className="grow stack">
-          {s ? (
-            <section className="card">
-              <div className="row-c between">
-                <h2 className="h2">Решение скоринга</h2>
-                <span className="xs muted">
-                  Модель {s.model_version}
-                  {s.scored_at ? ` · ${dateTime(s.scored_at)}` : ''}
-                </span>
-              </div>
-              <div className="kpis">
-                <div className="kpi">
-                  <span className="muted small">Скоринговый балл</span>
-                  <b className="num" style={{ fontSize: 36 }}>
-                    {s.score}
-                    <span className="muted" style={{ fontSize: 16 }}> / 1000</span>
-                  </b>
-                  <Meter value={s.score / 10} color="var(--c-black)" />
-                </div>
-                <div className="kpi">
-                  <span className="muted small">Грейд риска</span>
-                  <b className="num" style={{ fontSize: 36 }}>
-                    {s.risk_grade}
-                  </b>
-                  <Chip kind={GRADE_KIND[s.risk_grade]}>{s.risk_grade <= 'B' ? 'низкий риск' : s.risk_grade === 'C' ? 'средний риск' : 'высокий риск'}</Chip>
-                </div>
-                <div className="kpi">
-                  <span className="muted small">Вероятность дефолта</span>
-                  <b className="num" style={{ fontSize: 36 }}>
-                    {pct(s.pd * 100)}
-                  </b>
-                  <span className="xs muted">оценка модели, PD</span>
-                </div>
-              </div>
-              {dec && (
-                <dl className="dl">
-                  <div>
-                    <dt>Решение модели</dt>
-                    <dd>{DECISION_NAME[dec.decision]}</dd>
-                  </div>
-                  {dec.reason_codes.map((r) => (
-                    <div key={r}>
-                      <dt>Причина</dt>
-                      <dd>{POLICY_REASON[r] ?? r}</dd>
-                    </div>
-                  ))}
-                  {cond.map((c) => (
-                    <div key={c.code}>
-                      <dt>Условие · {CONDITION_NAME[c.code] ?? c.code}</dt>
-                      <dd>
-                        {c.description}: {money(c.recommended_amount_rub)}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-              )}
-            </section>
-          ) : (
-            a.status !== 'pending' && (
-              <section className="card">
-                <EmptyState title="Скоринга нет" text="Модель не вернула результат для этой заявки" />
-              </section>
-            )
-          )}
+          {bank && manual && <BankDecisionForm a={a} onDone={onUpdate} />}
+          {o && <OfferCard a={a} />}
+          {!bank && o && beforeIssue && <WhatIf a={a} product={productByType(products, o.product_type)} />}
+          {a.bank_decision && <BankDecisionInfo a={a} bank={bank} />}
 
-          {s && s.reason_codes.length > 0 && (
+          {bank ? <BankScoring a={a} /> : <ClientFactors a={a} />}
+          {!a.scoring_result && a.status !== 'pending' && (
             <section className="card">
               <h2 className="h2">Что повлияло на оценку</h2>
               <ul className="factors">
@@ -331,7 +361,10 @@ function View({ a, events, products, bank, onDecision, decisionPending, decision
             <dl className="dl">
               <div>
                 <dt>Продукт</dt>
-                <dd>{name}</dd>
+                <dd>
+                  {name}
+                  {a.product_selected_by_system && !noProduct(a) && <span className="xs muted"> · подобран банком</span>}
+                </dd>
               </div>
               <div>
                 <dt>Сумма</dt>
@@ -350,6 +383,7 @@ function View({ a, events, products, bank, onDecision, decisionPending, decision
                 <dd>{SEGMENT_NAME[p.segment]}</dd>
               </div>
             </dl>
+            <span className="xs muted">Сегмент определяет банк по числу сотрудников и выручке</span>
           </section>
           <section className="card tight">
             <h2 className="h3">Компания на момент подачи</h2>
@@ -386,11 +420,24 @@ function View({ a, events, products, bank, onDecision, decisionPending, decision
                 <dt>Платежи по кредитам в месяц</dt>
                 <dd>{money(a.credit_history.monthly_debt_payments_rub)}</dd>
               </div>
+              {a.enriched_data?.bank_credits && (
+                <div>
+                  <dt>Из них кредиты нашего банка</dt>
+                  <dd>
+                    {money(a.enriched_data.bank_credits.monthly_payments_rub)} · {a.enriched_data.bank_credits.count} шт.
+                  </dd>
+                </div>
+              )}
               <div>
                 <dt>Просрочка сейчас</dt>
                 <dd>{yesNo(a.credit_history.has_current_past_due)}</dd>
               </div>
             </dl>
+            {a.enriched_data?.bank_credits ? (
+              <span className="xs muted">Кредитная история — из БКИ и кредиты, которые наш банк уже выдал, на момент подачи</span>
+            ) : (
+              a.enriched_data?.bki && <span className="xs muted">Кредитная история — из БКИ на момент подачи</span>
+            )}
           </section>
           <section className="card tight">
             <h2 className="h3">История заявки</h2>
@@ -401,8 +448,8 @@ function View({ a, events, products, bank, onDecision, decisionPending, decision
                 {events.map((ev) => (
                   <li key={ev.id}>
                     <span className="t">{time(ev.created_at)}</span>
-                    <span className="dot" style={{ background: ev.event_type === 'failed' ? 'var(--c-negative)' : ev.event_type === 'status_changed' ? 'var(--c-red)' : 'var(--c-high)' }} />
-                    <span>{eventText(ev)}</span>
+                    <span className="dot" style={{ background: eventColor(ev) }} />
+                    <span>{eventText(ev, bank)}</span>
                   </li>
                 ))}
               </ul>

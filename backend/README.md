@@ -27,12 +27,13 @@ docker compose up -d --build
 
 При старте backend:
 
-- создаёт таблицы (`create_all`)
+- создаёт таблицы (`create_all`) и добавляет новые nullable-колонки и индексы в уже существующие (`add_missing_columns`) — база из прошлой версии обновляется без потери данных
 - создаёт бакет MinIO (`ensure_bucket`)
-- засеивает продукты (`ensure_products`, идемпотентно)
+- засеивает продукты (`ensure_products`, идемпотентно; при новой `SEED_VERSION` обновляет условия продуктов)
+- проставляет `outcome` старым заявкам `different` (`backfill_outcomes`)
 - создаёт админа из env (`ensure_admin`)
 
-Если менялась схема БД (миграций нет) — **пересоздать volume**:
+Если схема поменялась несовместимо (переименование или NOT NULL колонка) — **пересоздать volume**:
 
 ```bash
 docker compose down -v
@@ -78,19 +79,25 @@ backend/
 |---|---|---|
 | POST | `/auth/register` | Регистрация |
 | POST | `/auth/login` | Вход |
-| POST | `/auth/refresh` | Обновить access-токен |
+| POST | `/auth/refresh` | Обновить access-токен (тело `{"refresh_token"}` или query) |
 | POST | `/auth/logout` | Выход |
 | GET | `/auth/me` | Профиль (включая компанию/финансы/КИ) |
 | PATCH | `/auth/me` | Обновить профиль |
+| GET | `/auth/users` | Пользователи с профилями (admin) |
 | GET | `/products` | Каталог продуктов |
 | GET | `/products/{code}` | Детали продукта |
-| POST | `/applications` | Создать заявку (обогащение → ML → статус) |
+| POST | `/applications` | Создать заявку (проверка/подбор продукта → обогащение → ML → решение). Заголовок `Idempotency-Key` |
 | GET | `/applications` | Свои заявки (пагинация) |
 | GET | `/applications/{id}` | Детали заявки |
 | GET | `/applications/{id}/events` | История событий |
+| POST | `/applications/{id}/accept` | Принять предложение |
+| POST | `/applications/{id}/issue` | Подтвердить и оформить (синтетическая выдача, номер договора) |
+| POST | `/applications/{id}/reject` | Отказаться от предложения |
+| POST | `/applications/{id}/retry` | Повторить проверку после технической ошибки |
 | POST | `/scoring/batch` | Пакетный скоринг (без сохранения) |
 | GET | `/scoring/model-info` | Информация о ML-модели |
-| GET | `/admin/applications` | Все заявки (admin) |
+| GET | `/admin/applications` | Все заявки (admin), фильтры `?status=`, `?outcome=` |
+| POST | `/admin/applications/{id}/decision` | Решение по ручной проверке (admin) |
 | GET | `/admin/stats/overview` | Агрегаты (admin) |
 | GET | `/mock/egrul/{inn}` | Мок ЕГРЮЛ (`?fail=true` → 500) |
 | GET | `/mock/fns/{inn}` | Мок ФНС (`?fail=true` → 500) |
@@ -103,13 +110,16 @@ backend/
 
 | Статус | Когда |
 |---|---|
-| `pending` | Создана, ждём ML |
-| `confirmed` | ML `approve` + пользователь выбрал `product_type` |
-| `different` | ML `approve_with_conditions` / `manual_review`, или `approve` без `product_type` |
-| `declined` | ML `decline` |
-| `failed` | Ошибка обогащения / ML / сети |
+| `pending` | Создана или запущен повтор, ждём ML |
+| `confirmed` | ML `approve` + клиент сам выбрал продукт |
+| `different` | ML `approve_with_conditions` / `manual_review`, или продукт подобрал банк. Уточнение — `outcome`: `ALTERNATIVE_PRODUCT` / `COUNTER_OFFER` / `MANUAL_REVIEW` |
+| `declined` | ML `decline`, отказ банка по ручной проверке или нет подходящего продукта (`NO_SUITABLE_PRODUCT`) |
+| `failed` | Ошибка ML / сети, можно повторить (`/retry`) |
+| `accepted` | Клиент принял предложение |
+| `issued` | Кредит оформлен (синтетическая выдача) |
+| `rejected_by_client` | Клиент отказался от предложения |
 
-Маппинг — `services/scoring.decision_to_status`.
+Маппинг решения модели — `services/scoring.decision_to_status`. Правила банка поверх модели (подбор продукта, оффер со ставкой и платежом, встречное предложение в границах продукта) — `services/products.py` и `services/application.decide_offer`. Принятие и выдача — `services/deal.py`, решение по ручной проверке — `services/bank.py`. Подробно — `USERFLOW.md` §5–6.
 
 ## WebSocket
 
@@ -119,7 +129,7 @@ backend/
 ws://localhost:3001/ws/applications?token=<access_token>
 ```
 
-Невалидный JWT → закрытие с кодом `4401`. Сообщения:
+Невалидный или отозванный (после logout) JWT → закрытие с кодом `4401`. В `status_changed` клиенту уходят только `outcome`, `explanation`, `actions`. Сообщения:
 
 ```json
 {"type": "status_changed", "application_id": "...", "status": "confirmed", "payload": {...}, "created_at": "..."}
@@ -151,10 +161,11 @@ make test-cov
 
 ## Ограничения MVP
 
-См. `USERFLOW.md` §11. Кратко: нет офферов, подписания, выдачи, сопровождения, ручного андеррайтинга, множественных компаний на пользователя.
+См. `USERFLOW.md` §11. Кратко: нет офферов с TTL, загрузки документов по запросу, настоящей подписи и реальной выдачи денег (выдача синтетическая), сопровождения кредита, нескольких компаний на пользователя.
 
 ## Troubleshooting
 
 - `docker compose down -v` при `UNIQUE constraint failed` / `no such table` — схема изменилась
-- ML недоступен → заявки получают статус `failed`, ответ `502`
+- ML недоступен → заявки получают статус `failed`, ответ `502` с `application_id`; после запуска ML — `POST /applications/{id}/retry`
+- `python-magic` требует системную библиотеку `libmagic` (в Docker-образе есть; на macOS: `brew install libmagic`)
 - Мок-госуслуги можно симулировать сбоем: `/mock/egrul/7701234567?fail=true`

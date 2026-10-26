@@ -11,6 +11,8 @@ export const short = (n: number) => {
 };
 
 export const pct = (n: number, digits = 1) => `${n.toFixed(digits).replace('.', ',')}%`;
+/** Ставка как есть, без округления: 18 → «18%», 17,5 → «17,5%» */
+export const rate = (n: number) => `${String(n).replace('.', ',')}%`;
 export const dec2 = (n: number) => n.toFixed(2).replace('.', ',');
 
 export const date = (iso?: string) => (iso ? new Date(iso).toLocaleDateString('ru-RU') : '—');

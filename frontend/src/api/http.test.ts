@@ -59,7 +59,18 @@ describe('request', () => {
 
   it('502 без тела — понятный текст', async () => {
     mockFetch(() => new Response('', { status: 502 }));
-    await expect(request('POST', '/applications')).rejects.toMatchObject({ status: 502, message: 'Сервис скоринга недоступен' });
+    await expect(request('POST', '/applications')).rejects.toMatchObject({ status: 502, message: 'Сервис оценки заявок недоступен' });
+  });
+
+  it('502 по сохранённой заявке — в ошибке есть её номер', async () => {
+    mockFetch(() => respond(502, { detail: 'ML недоступен', application_id: 'abc123' }));
+    await expect(request('POST', '/applications')).rejects.toMatchObject({ status: 502, data: { application_id: 'abc123' } });
+  });
+
+  it('свои заголовки уходят вместе с запросом', async () => {
+    mockFetch(() => respond(201, {}));
+    await request('POST', '/applications', { body: {}, headers: { 'Idempotency-Key': 'k-1' } });
+    expect((calls[0].init.headers as Record<string, string>)['Idempotency-Key']).toBe('k-1');
   });
 
   it('нет сети — понятный текст', async () => {
@@ -77,8 +88,20 @@ describe('request', () => {
       return (init.headers as Record<string, string>).Authorization === 'Bearer NEW' ? respond(200, { ok: 1 }) : respond(401, { detail: 'expired' });
     });
     await expect(request('GET', '/auth/me')).resolves.toEqual({ ok: 1 });
-    expect(calls.map((c) => c.url)).toEqual(['/api/auth/me', '/api/auth/refresh?refresh_token=R1', '/api/auth/me']);
+    expect(calls.map((c) => c.url)).toEqual(['/api/auth/me', '/api/auth/refresh', '/api/auth/me']);
     expect(useSession.getState().access).toBe('NEW');
+  });
+
+  it('refresh-токен уходит в теле запроса, а не в адресе', async () => {
+    useSession.getState().setTokens('OLD', 'R1');
+    mockFetch((url, init) => {
+      if (url.startsWith('/api/auth/refresh')) return respond(200, { access_token: 'NEW' });
+      return (init.headers as Record<string, string>).Authorization === 'Bearer NEW' ? respond(200, {}) : respond(401, {});
+    });
+    await request('GET', '/auth/me');
+    const refresh = calls.find((c) => c.url.startsWith('/api/auth/refresh'))!;
+    expect(refresh.url).toBe('/api/auth/refresh');
+    expect(JSON.parse(String(refresh.init.body))).toEqual({ refresh_token: 'R1' });
   });
 
   it('refresh не сработал, но это демо-аккаунт — входим заново', async () => {
@@ -108,5 +131,12 @@ describe('request', () => {
     });
     await Promise.all([request('GET', '/a'), request('GET', '/b'), request('GET', '/c')]);
     expect(calls.filter((c) => c.url.startsWith('/api/auth/refresh'))).toHaveLength(1);
+  });
+});
+
+describe('ошибки проверки всего тела', () => {
+  it('422 с loc [body] — текст проверки как есть', async () => {
+    mockFetch(() => respond(422, { detail: [{ loc: ['body'], msg: 'Value error, Выручка в месяц не может быть больше выручки за год' }] }));
+    await expect(request('PATCH', '/auth/me')).rejects.toMatchObject({ status: 422, message: 'Выручка в месяц не может быть больше выручки за год' });
   });
 });

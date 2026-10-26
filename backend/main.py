@@ -12,6 +12,7 @@ from database import create_tables
 from database import delete_tables
 from minio.client import s3_client
 from ml_grpc.client import ScoringClient
+from repositories.applications import ApplicationRepository
 from repositories.auth import UserRepository
 from repositories.products import ProductRepository
 from router.applications import router as applications_router
@@ -37,6 +38,10 @@ async def lifespan(app: FastAPI):
 
     await ProductRepository.ensure_products()
     print("Продукты загружены")
+
+    backfilled = await ApplicationRepository.backfill_outcomes()
+    if backfilled:
+        print(f"Тип результата проставлен старым заявкам: {backfilled}")
 
     await UserRepository.ensure_admin(
         email=os.getenv("ADMIN_EMAIL", "admin@example.com"),
@@ -93,10 +98,15 @@ def custom_openapi():
         ("/applications", "get"): [{"Bearer": []}],
         ("/applications/{application_id}", "get"): [{"Bearer": []}],
         ("/applications/{application_id}/events", "get"): [{"Bearer": []}],
+        ("/applications/{application_id}/accept", "post"): [{"Bearer": []}],
+        ("/applications/{application_id}/issue", "post"): [{"Bearer": []}],
+        ("/applications/{application_id}/reject", "post"): [{"Bearer": []}],
+        ("/applications/{application_id}/retry", "post"): [{"Bearer": []}],
         ("/scoring/batch", "post"): [{"Bearer": []}],
         ("/scoring/model-info", "get"): [{"Bearer": []}],
         ("/admin/applications", "get"): [{"Bearer": []}],
         ("/admin/stats/overview", "get"): [{"Bearer": []}],
+        ("/admin/applications/{application_id}/decision", "post"): [{"Bearer": []}],
     }
     
     for (path, method), security in secured_paths.items():

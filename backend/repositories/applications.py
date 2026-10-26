@@ -1,11 +1,11 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
 from database import new_session
 from models.applications import ApplicationOrm, ApplicationEventOrm
-from schemas.applications import SScoreApplicationRequest
+from schemas.applications import SCreditHistory, SScoreApplicationRequest
 
 
 class ApplicationRepository:
@@ -23,6 +23,9 @@ class ApplicationRepository:
         application_id = uuid.uuid4().hex
         now = datetime.now(timezone.utc)
         actual_product_type = product_type if product_type is not None else data.application.product_type
+        if product_selected_by_system:
+            # банк подобрал продукт или не нашёл подходящего (тогда None) — берём ровно это
+            actual_product_type = product_type
 
         async with new_session() as session:
             application = ApplicationOrm(
@@ -30,6 +33,8 @@ class ApplicationRepository:
                 user_id=user_id,
                 status="pending",
                 product_type=actual_product_type,
+                product_selected_by_system=product_selected_by_system,
+                idempotency_key=idempotency_key,
                 requested_amount_rub=data.application.requested_amount_rub,
                 term_months=data.application.term_months,
                 purpose=data.application.purpose,
@@ -86,6 +91,8 @@ class ApplicationRepository:
         status: str,
         explanation: str | None = None,
         enriched_data: dict | None = None,
+        outcome: str | None = None,
+        offer: dict | None = None,
     ) -> ApplicationOrm | None:
         """Сохраняет результат скоринга, обогащение и статус, пишет события"""
         now = datetime.now(timezone.utc)
@@ -94,6 +101,8 @@ class ApplicationRepository:
             values: dict = {
                 "scoring_result": scoring_result,
                 "status": status,
+                "outcome": outcome,
+                "offer": offer,
                 "updated_at": now,
             }
             if explanation is not None:
@@ -121,7 +130,7 @@ class ApplicationRepository:
                 ApplicationEventOrm(
                     application_id=application_id,
                     event_type="status_changed",
-                    payload={"status": status},
+                    payload={"status": status, "outcome": outcome},
                     created_at=now,
                 )
             )

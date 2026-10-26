@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -11,10 +11,62 @@ LegalForm = Literal["llc", "individual_entrepreneur", "joint_stock_company"]
 RiskGrade = Literal["A", "B", "C", "D", "E"]
 Decision = Literal["approve", "approve_with_conditions", "manual_review", "decline"]
 ReasonImpact = Literal["positive", "negative", "neutral"]
-ApplicationStatus = Literal["pending", "failed", "confirmed", "different", "declined"]
+ApplicationStatus = Literal[
+    "pending", "failed", "confirmed", "different", "declined",
+    # после решения: клиент принял предложение → кредит оформлен и выдан (синтетически),
+    # или клиент отказался от предложения
+    "accepted", "issued", "rejected_by_client",
+]
+# Уточнение статуса different: что именно предлагает банк
+ApplicationOutcome = Literal["ALTERNATIVE_PRODUCT", "COUNTER_OFFER", "MANUAL_REVIEW"]
+# Что клиент может сделать с заявкой сейчас (кнопки на фронте)
+ApplicationAction = Literal["accept", "reject", "issue", "retry"]
+ACCEPTABLE_OUTCOMES = ("ALTERNATIVE_PRODUCT", "COUNTER_OFFER")
+
+
+def available_actions(status: str, outcome: str | None, has_offer: bool) -> list[str]:
+    """
+    Действия клиента по заявке. Одно правило для API, кнопок и проверок на сервере:
+    принять/отказаться — одобрение или предложение банка с оффером; оформить — после
+    принятия; повторить — после технической ошибки. Ручная проверка — не оффер.
+    """
+    if status == "failed":
+        return ["retry"]
+    if status == "accepted":
+        return ["issue", "reject"]
+    offer_ready = has_offer and (status == "confirmed" or (status == "different" and outcome in ACCEPTABLE_OUTCOMES))
+    return ["accept", "reject"] if offer_ready else []
 
 DEFAULT_PRODUCT_TYPE: ProductType = "term_loan"
 CONSENT_VERSION = "2026-10-25"
+
+
+def ensure_not_future(value: datetime | None, what: str) -> None:
+    """
+    Дата из анкеты не может быть в будущем. Сутки запаса — из-за часовых поясов:
+    клиент в Москве после полуночи уже живёт «завтрашней» датой по UTC.
+    """
+    if value is None:
+        return
+    moment = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if moment > datetime.now(timezone.utc) + timedelta(days=1):
+        raise ValueError(f"{what} не может быть в будущем")
+
+
+def ensure_consistent_financials(f) -> None:
+    """
+    Финансы из анкеты не противоречат сами себе: месячная выручка, прибыль и EBITDA
+    не больше годовой выручки. Иначе, например, правило «платежи по долгам не больше 55%
+    месячной выручки» обходится завышенной месячной выручкой.
+    """
+    if f is None:
+        return
+    if f.monthly_revenue_rub > f.annual_revenue_rub:
+        raise ValueError("Выручка в месяц не может быть больше выручки за год")
+    if f.annual_net_profit_rub > f.annual_revenue_rub:
+        raise ValueError("Чистая прибыль не может быть больше выручки за год")
+    if f.ebitda_rub > f.annual_revenue_rub:
+        raise ValueError("EBITDA не может быть больше выручки за год")
 
 
 class SApplication(BaseModel):
@@ -92,6 +144,21 @@ class SDecisionCondition(BaseModel):
     code: str
     description: str
     recommended_amount_rub: int
+    # Если на рекомендуемую сумму подходит другой продукт — какой (заполняет бэкенд)
+    recommended_product_type: ProductType | None = None
+
+
+class SOffer(BaseModel):
+    """Условия предложения банка: ставка внутри диапазона продукта по грейду, аннуитетный платёж"""
+    product_type: ProductType
+    product_code: str
+    product_name: str
+    amount_rub: int
+    term_months: int
+    rate_percent: float
+    monthly_payment_rub: int
+    total_payment_rub: int
+    overpayment_rub: int
 
 
 class SDecisionResult(BaseModel):
@@ -151,7 +218,7 @@ class SApplicationConsents(BaseModel):
 class SApplicationCreateRequest(BaseModel):
     """Тело запроса на создание кредитной заявки"""
     product_type: ProductType | None = None
-    requested_amount_rub: int = Field(..., ge=0)
+    requested_amount_rub: int = Field(..., gt=0)
     term_months: int = Field(..., ge=1)
     purpose: FinancingPurpose
     segment: BusinessSegment
@@ -159,6 +226,39 @@ class SApplicationCreateRequest(BaseModel):
     financials: SFinancials | None = None
     credit_history: SCreditHistory | None = None
     consents: SApplicationConsents
+
+    @model_validator(mode="after")
+    def check_dates(self):
+        """Даты компании и отчётности не из будущего"""
+        if self.company is not None:
+            ensure_not_future(self.company.registration_date, "Дата регистрации компании")
+        if self.financials is not None:
+            ensure_not_future(self.financials.period_end, "Отчётный период")
+            ensure_consistent_financials(self.financials)
+        return self
+
+
+class SBankDecision(BaseModel):
+    """Решение сотрудника банка по заявке на ручной проверке"""
+    decision: Literal["approve", "approve_with_conditions", "decline"]
+    comment: str | None = None
+    recommended_amount_rub: int | None = None
+    decided_at: datetime | None = None
+    decided_by: str | None = None
+
+
+class SBankDecisionRequest(BaseModel):
+    """Тело POST /admin/applications/{id}/decision"""
+    decision: Literal["approve", "approve_with_conditions", "decline"]
+    recommended_amount_rub: int | None = Field(None, gt=0)
+    comment: str | None = Field(None, max_length=1000)
+
+    @model_validator(mode="after")
+    def check_amount(self):
+        """Для одобрения с условиями нужна сумма"""
+        if self.decision == "approve_with_conditions" and self.recommended_amount_rub is None:
+            raise ValueError("Для одобрения с условиями укажите recommended_amount_rub")
+        return self
 
 
 class SApplicationEventResponse(BaseModel):
@@ -175,6 +275,14 @@ class SApplicationDetail(BaseModel):
     """Полные данные заявки с результатом скоринга"""
     application_id: str
     status: ApplicationStatus
+    product_selected_by_system: bool = False
+    outcome: ApplicationOutcome | None = None
+    offer: SOffer | None = None
+    contract_number: str | None = None
+    issued_at: datetime | None = None
+    bank_decision: SBankDecision | None = None
+    actions: list[ApplicationAction] = []
+    offer_outdated: bool = False
     created_at: datetime
     updated_at: datetime
     application: SApplication
@@ -194,8 +302,35 @@ class SApplicationListResponse(BaseModel):
     previous_cursor: str | None = None
 
 
-def application_orm_to_schema(application) -> SApplicationDetail:
-    """Собирает SApplicationDetail из ORM-модели заявки"""
+OPEN_OFFER_STATUSES = ("confirmed", "different", "accepted")
+
+
+def bank_credits_at_scoring(application) -> int:
+    """Сколько кредитов нашего банка у клиента было учтено при оценке заявки"""
+    summary = (getattr(application, "enriched_data", None) or {}).get("bank_credits") or {}
+    return int(summary.get("count") or 0)
+
+
+def is_offer_outdated(application, issued_count: int | None) -> bool:
+    """
+    Предложение устарело: после оценки заявки клиенту оформили другой кредит, и нагрузка,
+    на которой посчитано решение, уже не та. issued_count — сколько кредитов у клиента
+    оформлено сейчас (сама заявка ещё не выдана, поэтому в счёт не входит).
+    """
+    if issued_count is None or getattr(application, "status", None) not in OPEN_OFFER_STATUSES:
+        return False
+    if not getattr(application, "offer", None):
+        return False
+    return issued_count > bank_credits_at_scoring(application)
+
+
+def application_orm_to_schema(application, issued_count: int | None = None) -> SApplicationDetail:
+    """
+    Собирает SApplicationDetail из ORM-модели заявки. issued_count — сколько кредитов клиенту
+    уже оформлено: если после оценки их стало больше, предложение помечается устаревшим и
+    принять или оформить его нельзя.
+    """
+    outdated = is_offer_outdated(application, issued_count)
     scoring_result = None
     if application.scoring_result is not None:
         scoring_result = SScoreApplicationResponse.model_validate(application.scoring_result)
@@ -203,6 +338,19 @@ def application_orm_to_schema(application) -> SApplicationDetail:
     return SApplicationDetail(
         application_id=application.application_id,
         status=application.status,
+        product_selected_by_system=bool(getattr(application, "product_selected_by_system", False)),
+        outcome=getattr(application, "outcome", None),
+        offer=SOffer.model_validate(application.offer) if getattr(application, "offer", None) else None,
+        contract_number=getattr(application, "contract_number", None),
+        issued_at=getattr(application, "issued_at", None),
+        bank_decision=getattr(application, "bank_decision", None),
+        actions=[
+            a for a in available_actions(
+                application.status, getattr(application, "outcome", None), bool(getattr(application, "offer", None))
+            )
+            if not (outdated and a in ("accept", "issue"))
+        ],
+        offer_outdated=outdated,
         created_at=application.created_at,
         updated_at=application.updated_at,
         application=SApplication(
