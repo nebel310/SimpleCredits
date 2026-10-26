@@ -90,7 +90,7 @@ npm run dev               # http://localhost:5173, /api → http://localhost:300
 ## Тесты
 
 ```bash
-npm test                 # 102 юнит-теста, бэкенд не нужен
+npm test                 # 104 юнит-теста, бэкенд не нужен
 npm run test:e2e         # 26 e2e-сценариев против запущенного стека (по умолчанию http://localhost:5500)
 ```
 

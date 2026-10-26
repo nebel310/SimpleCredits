@@ -36,22 +36,35 @@ export async function submitApplication(page: Page) {
 }
 
 /**
- * Новый клиент с тем же профилем, что у демо-компании A (ИНН, финансы, история как в БКИ).
- * Кредиты, которые банк уже выдал, учитываются в следующей заявке, поэтому у демо-аккаунта A
- * после нескольких оформлений риск растёт. У нового клиента выданных кредитов нет —
- * сценарий одобрения повторяется при любом числе прогонов.
+ * ИНН компаний, у которых в мок-БКИ чистая история (без кредитов и просрочек), а сами они
+ * работают больше года. Мок отвечает по ИНН детерминированно; с финансами как у A каждая из них
+ * одобряется с запасом (проверено скорингом). Банк учитывает кредиты, уже выданные компании
+ * (по ИНН), поэтому тест берёт случайную компанию из списка — прогоны не копят нагрузку на одном ИНН.
+ */
+const CLEAN_INNS = ['770007056148', '776484473097', '772508996141', '770791863390', '777196010057', '779092283454', '773157997267', '774878146819', '771811064642', '778370676645', '771896239822', '776338805448', '778241527495', '774676369447', '772480903669', '777516460306', '773731688557', '777565192948', '774383313522', '774433090648', '776576785728', '778333241386', '779037638125', '777852965623', '775011845732', '771768924747', '771813738942', '777924696325', '775807309316', '777716979678', '774848186896', '774096103113', '772110822059', '771914080281', '779381965796', '771784520472', '774008392762', '776823621527', '774455229895', '771351860678'];
+
+async function cleanCompany(page: Page) {
+  const inn = CLEAN_INNS[Math.floor(Math.random() * CLEAN_INNS.length)];
+  const e = await (await page.request.get(`api/mock/egrul/${inn}`)).json();
+  const b = await (await page.request.get(`api/mock/bki/${inn}`)).json();
+  return { e, b };
+}
+
+/**
+ * Новый клиент с финансами как у демо-компании A и своей компанией с чистой историей.
+ * Сценарий одобрения повторяется при любом числе прогонов на одной базе.
  */
 export async function freshClientLikeA(page: Page) {
   const u = newUser();
-  const day = new Date(Date.now() - 3044 * 86_400_000).toISOString().slice(0, 10);
+  const { e, b } = await cleanCompany(page);
   await page.request.post('api/auth/register', { data: { username: u.username, email: u.email, password: u.password, password_confirm: u.password } });
   const tokens = await (await page.request.post('api/auth/login', { data: { email: u.email, password: u.password } })).json();
   const profile = await page.request.patch('api/auth/me', {
     headers: { Authorization: `Bearer ${tokens.access_token}` },
     data: {
-      company: { inn: '771588139986', ogrn: '308823309165255', legal_name: 'ИП Компания 9986', legal_form: 'individual_entrepreneur', okved: '43.21', region: 'Санкт-Петербург', registration_date: `${day}T00:00:00Z`, employee_count: 12 },
+      company: { inn: e.inn, ogrn: e.ogrn, legal_name: e.legal_name, legal_form: e.legal_form, okved: e.okved, region: e.region, registration_date: e.registration_date, employee_count: e.employee_count },
       financials: { annual_revenue_rub: 48_000_000, annual_net_profit_rub: 5_600_000, ebitda_rub: 8_100_000, total_debt_rub: 0, monthly_revenue_rub: 4_000_000, monthly_expenses_rub: 3_300_000, accounts_receivable_rub: 1_400_000, cash_balance_rub: 2_200_000, period_end: '2026-09-30T00:00:00Z' },
-      credit_history: { active_obligations_count: 0, total_outstanding_rub: 0, monthly_debt_payments_rub: 0, max_days_past_due_12m: 0, has_current_past_due: false, credit_utilization: 0, closed_obligations_count: 7, applications_last_6m: 0 },
+      credit_history: { active_obligations_count: 0, total_outstanding_rub: 0, monthly_debt_payments_rub: 0, max_days_past_due_12m: 0, has_current_past_due: false, credit_utilization: 0, closed_obligations_count: b.closed_obligations_count, applications_last_6m: b.applications_last_6m },
     },
   });
   expect(profile.ok()).toBe(true);
